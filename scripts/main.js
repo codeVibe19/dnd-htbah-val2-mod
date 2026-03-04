@@ -1,6 +1,13 @@
 /**
- * HTBAH VAL-2 Combat v1.5
+ * HTBAH VAL-2 Combat v1.6
  * Foundry V13 | Requires: lib-wrapper, socketlib
+ *
+ * Neu in v1.6:
+ * - Granaten-System mit Templates
+ * - Streuung bei Fehlwürfen (1W6 Fuß in zufällige Richtung)
+ * - Blendgranaten lösen Betäubung aus (2 Runden)
+ * - Rauchgranaten blockieren Sicht (3 Runden)
+ * - Splitter- und Brandgranaten mit Flächenschaden
  *
  * Fixes v1.4:
  * - DialogV2 <script> entfernt → Firemode-Listener per Hooks.once("renderDialogV2")
@@ -39,6 +46,23 @@ const WEAPON_CONFIG = new Map([
 const WEAPON_TYPE_OPTIONS = [
   { value: "", label: "— Kein VAL-2 Typ —" },
   ...Array.from(WEAPON_CONFIG.entries())
+    .map(([key, cfg]) => ({ value: key, label: cfg.label }))
+    .sort((a, b) => a.label.localeCompare(b.label, "de"))
+];
+
+// ═══════════════════════════════════════════════════════════════
+// GRANATEN-KONFIGURATION
+// ═══════════════════════════════════════════════════════════════
+const GRENADE_CONFIG = new Map([
+  ["frag",   { label: "Splittergranate",   type: "circle", size: 10, damage: "4d8", effect: null }],
+  ["flash",  { label: "Blendgranate",      type: "circle", size: 15, damage: null,  effect: "stun" }],
+  ["smoke",  { label: "Rauchgranate",      type: "circle", size: 20, damage: null,  effect: "smoke" }],
+  ["incen",  { label: "Brandgranate",      type: "circle", size: 10, damage: "3d8", effect: "burn" }],
+]);
+
+const GRENADE_TYPE_OPTIONS = [
+  { value: "", label: "— Keine Granate —" },
+  ...Array.from(GRENADE_CONFIG.entries())
     .map(([key, cfg]) => ({ value: key, label: cfg.label }))
     .sort((a, b) => a.label.localeCompare(b.label, "de"))
 ];
@@ -82,6 +106,13 @@ function getHealpackValue(item) {
   const flagVal = item.getFlag(MODULE_ID, "healAmount");
   if (flagVal !== undefined && flagVal !== null) return Number(flagVal);
   return HEALPACK_NAMES.get(item.name.toLowerCase().trim()) ?? null;
+}
+
+function getGrenadeConfig(item) {
+  if (item.type !== "consumable") return null;
+  const grenadeType = item.getFlag(MODULE_ID, "grenadeType");
+  if (!grenadeType) return null;
+  return GRENADE_CONFIG.get(grenadeType) ?? null;
 }
 
 function getCurrentAmmo(item) {
@@ -200,6 +231,134 @@ async function gmReloadFromPool({ actorId, itemId, weaponType }) {
   return { loaded: toLoad, poolLeft: newPool, poolEmpty: newPool <= 0 };
 }
 
+/**
+ * Granaten-Template platzieren mit Streuung bei Fehlwurf
+ * @param {object} params 
+ * @param {number} params.x - Ziel X-Koordinate
+ * @param {number} params.y - Ziel Y-Koordinate
+ * @param {string} params.templateType - "circle", "cone", "ray"
+ * @param {number} params.distance - Größe des Templates in Fuß
+ * @param {string} params.fillColor - Füllfarbe (hex)
+ * @param {boolean} params.isScatter - Ob die Granate streut (bei Fehlwurf)
+ * @param {number} params.scatterDistance - Streuung in Fuß
+ * @returns {Promise<string>} Template ID
+ */
+async function gmCreateGrenadeTemplate({ x, y, templateType, distance, fillColor, isScatter, scatterDistance }) {
+  let finalX = x;
+  let finalY = y;
+  
+  // Bei Streuung: zufällige Richtung und Distanz
+  if (isScatter && scatterDistance > 0) {
+    const angle = Math.random() * Math.PI * 2;
+    const scatter = scatterDistance * canvas.grid.size;
+    finalX += Math.cos(angle) * scatter;
+    finalY += Math.sin(angle) * scatter;
+  }
+
+  const templateData = {
+    t: templateType,
+    user: game.user.id,
+    x: finalX,
+    y: finalY,
+    distance: distance,
+    fillColor: fillColor || "#ff6600",
+    flags: {
+      [MODULE_ID]: {
+        isGrenadeTemplate: true
+      }
+    }
+  };
+
+  const template = await canvas.scene.createEmbeddedDocuments("MeasuredTemplate", [templateData]);
+  return template[0]?.id;
+}
+
+/**
+ * Granaten-Effekt auf Tokens in Template anwenden
+ * @param {object} params
+ * @param {string} params.templateId - ID des Templates
+ * @param {string} params.effectType - "stun", "smoke", "burn", null
+ * @param {string} params.damageFormula - z.B. "4d8" oder null
+ * @returns {Promise<object[]>} Array von Ergebnissen pro Token
+ */
+async function gmApplyGrenadeEffect({ templateId, effectType, damageFormula }) {
+  const template = canvas.templates.get(templateId);
+  if (!template) return { error: "template_not_found" };
+
+  // Tokens im Template finden
+  const tokensInTemplate = canvas.tokens.placeables.filter(token => {
+    if (!token.actor) return false;
+    const point = { x: token.center.x, y: token.center.y };
+    return template.object.shape.contains(point.x - template.x, point.y - template.y);
+  });
+
+  const results = [];
+
+  for (const token of tokensInTemplate) {
+    const result = { tokenId: token.id, tokenName: token.name };
+
+    // Schaden anwenden
+    if (damageFormula) {
+      const dmgRoll = await new Roll(damageFormula).evaluate();
+      const damage = dmgRoll.total;
+      
+      // Rüstung berücksichtigen
+      const armorValue = token.actor?.system?.attributes?.armor?.value ?? 0;
+      const armorThreshold = armorValue === 1 ? 2 : armorValue === 2 ? 4 : armorValue === 3 ? 6 : 0;
+      
+      const diceResults = dmgRoll.terms[0]?.results?.map(r => r.result) ?? [damage];
+      const afterArmor = diceResults.map(r => r <= armorThreshold ? 0 : r);
+      const finalDmg = afterArmor.reduce((a, b) => a + b, 0);
+      
+      const hp = token.actor.system.attributes.health;
+      const newHP = Math.max(0, hp.value - finalDmg);
+      await token.actor.update({ "system.attributes.health.value": newHP });
+      
+      result.damage = finalDmg;
+      result.oldHP = hp.value;
+      result.newHP = newHP;
+    }
+
+    // Statuseffekt anwenden (stun)
+    if (effectType === "stun") {
+      const stunEffect = {
+        name: "Betäubt",
+        icon: "icons/svg/daze.svg",
+        flags: {
+          [MODULE_ID]: { isStun: true }
+        },
+        changes: [],
+        duration: { rounds: 2 }
+      };
+      
+      // Prüfen ob HTBAH-System Stun-Status hat, sonst als Active Effect
+      const existingStun = token.actor.effects.find(e => e.flags?.[MODULE_ID]?.isStun);
+      if (!existingStun) {
+        await token.actor.createEmbeddedDocuments("ActiveEffect", [stunEffect]);
+        result.effect = "stun";
+      }
+    }
+
+    results.push(result);
+  }
+
+  return results;
+}
+
+/**
+ * Rauchgranaten-Template mit Sichtblockierung erstellen
+ */
+async function gmCreateSmokeWall({ templateId, duration }) {
+  const template = canvas.templates.get(templateId);
+  if (!template) return { error: "template_not_found" };
+
+  // Template mit Wand-Flagge markieren für Sichtblockierung
+  await template.document.setFlag(MODULE_ID, "blockVision", true);
+  await template.document.setFlag(MODULE_ID, "smokeUntilRound", game.combat?.round + (duration || 3));
+  
+  return { success: true, templateId };
+}
+
 // ═══════════════════════════════════════════════════════════════
 // SOCKETLIB REGISTRIERUNG
 // ═══════════════════════════════════════════════════════════════
@@ -213,6 +372,9 @@ Hooks.once("socketlib.ready", () => {
   socket.register("setAmmo",        gmSetAmmo);
   socket.register("consumeItem",    gmConsumeItem);
   socket.register("reloadFromPool", gmReloadFromPool);
+  socket.register("createGrenadeTemplate", gmCreateGrenadeTemplate);
+  socket.register("applyGrenadeEffect", gmApplyGrenadeEffect);
+  socket.register("createSmokeWall", gmCreateSmokeWall);
   console.log(`${MODULE_ID} | socketlib bereit.`);
 });
 
@@ -362,6 +524,63 @@ async function showHealDialog(itemName, healAmount, quantity) {
     rejectClose: false
   });
   return result ?? false;
+}
+
+async function showGrenadeDialog(actor, grenadeCfg, grenadeName, quantity) {
+  const skills = getActionSkills(actor);
+  if (!skills.length) {
+    ui.notifications.warn(`${MODULE_ID} | Keine Handeln-Skills gefunden.`);
+    return null;
+  }
+
+  const skillOptions = skills
+    .map(s => `<option value="${s.id}">${s.name} (${s.value})</option>`)
+    .join("");
+
+  const effectInfo = grenadeCfg.effect === "stun" ? "💫 Betäubt Ziele für 2 Runden"
+                   : grenadeCfg.effect === "smoke" ? "💨 Blockiert Sicht für 3 Runden"
+                   : grenadeCfg.effect === "burn" ? "🔥 Verursacht Brandschaden"
+                   : "";
+
+  const damageInfo = grenadeCfg.damage ? `💥 Schaden: ${grenadeCfg.damage}` : "";
+
+  const result = await foundry.applications.api.DialogV2.wait({
+    window: { title: `${grenadeName} werfen` },
+    content: `
+      <div style="display:flex; flex-direction:column; gap:8px; padding:8px;">
+        <div>
+          <label style="display:block; margin-bottom:4px; font-weight:bold;">Skill (Handeln):</label>
+          <select id="val2-grenade-skill" style="width:100%;">${skillOptions}</select>
+        </div>
+        <div style="margin-top:8px; padding:8px; background:rgba(69,186,255,0.1); border-radius:4px;">
+          <p style="margin:0; font-size:0.9em; color:#7ea6c8;"><b>Wirkung:</b></p>
+          <p style="margin:4px 0 0; color:#ddd; font-size:0.9em;">
+            🎯 Radius: ${grenadeCfg.size} Fuß<br>
+            ${damageInfo}<br>
+            ${effectInfo}
+          </p>
+          <p style="margin:6px 0 0; font-size:0.85em; color:#aaa; font-style:italic;">
+            ⚠️ Fehlwurf: Granate streut 1W6 Fuß in zufällige Richtung
+          </p>
+        </div>
+        <p style="color:#aaa; font-size:0.9em; margin:4px 0 0;">Verbleibend nach Wurf: ${quantity - 1}</p>
+      </div>
+    `,
+    buttons: [
+      {
+        label: "Werfen", action: "ok", default: true,
+        callback: (_e, _b, dialog) => {
+          const skillId = dialog.element.querySelector("#val2-grenade-skill")?.value;
+          if (!skillId) return null;
+          return { skillId };
+        }
+      },
+      { label: "Abbrechen", action: "cancel", callback: () => null }
+    ],
+    rejectClose: false
+  });
+
+  return result ?? null;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -563,6 +782,171 @@ async function handleHealpackRoll(item) {
 }
 
 // ═══════════════════════════════════════════════════════════════
+// GRANATENWURF
+// ═══════════════════════════════════════════════════════════════
+
+async function handleGrenadeThrow(item) {
+  const actor = item.actor;
+  if (!actor) return;
+
+  const grenadeCfg = getGrenadeConfig(item);
+  if (!grenadeCfg) return;
+
+  const qty = item.system?.quantity ?? 1;
+  if (qty <= 0) {
+    ui.notifications.warn(`❌ ${item.name}: Keine Granaten mehr!`);
+    return;
+  }
+
+  const choice = await showGrenadeDialog(actor, grenadeCfg, item.name, qty);
+  if (!choice) return;
+
+  const skillItem = actor.items.get(choice.skillId);
+  if (!skillItem) {
+    ui.notifications.error(`${MODULE_ID} | Skill nicht gefunden.`);
+    return;
+  }
+
+  const skillName = skillItem.name;
+  const skillValue = Number(skillItem.system?.value ?? skillItem.system?.wert ?? 0);
+
+  // Wurf durchführen
+  const throwRoll = await new Roll("1d100").evaluate();
+  const rolled = throwRoll.total;
+  const isSuccess = rolled <= skillValue;
+  const isCrit = rolled <= 10;
+
+  // Streuung bei Fehlwurf
+  let scatterDistance = 0;
+  let scatterRoll = null;
+  if (!isSuccess) {
+    scatterRoll = await new Roll("1d6").evaluate();
+    scatterDistance = scatterRoll.total;
+  }
+
+  const flavorParts = [
+    `<b>${item.name} werfen</b>`,
+    `${skillName} (${skillValue})`,
+    isCrit ? `<span style="color:#ffd700; font-weight:bold;">🎯 PERFEKTER WURF!</span>` : ""
+  ].filter(Boolean).join(" | ");
+
+  await throwRoll.toMessage({
+    speaker: ChatMessage.getSpeaker({ actor }),
+    flavor: flavorParts,
+    rollMode: game.settings.get("core", "rollMode")
+  });
+
+  if (scatterRoll) {
+    await scatterRoll.toMessage({
+      speaker: ChatMessage.getSpeaker({ actor }),
+      flavor: `<b>⚠️ Fehlwurf!</b> Granate streut ${scatterDistance} Fuß`,
+      rollMode: game.settings.get("core", "rollMode")
+    });
+  }
+
+  // Template-Platzierung initiieren
+  ui.notifications.info(`🎯 Klicke auf die Karte, um die ${item.name} zu platzieren.`);
+
+  // Template-Vorschau erstellen und auf Platzierung warten
+  const templateData = {
+    t: grenadeCfg.type,
+    user: game.user.id,
+    distance: grenadeCfg.size,
+    fillColor: grenadeCfg.effect === "smoke" ? "#666666"
+                : grenadeCfg.effect === "stun" ? "#ffff00"
+                : grenadeCfg.effect === "burn" ? "#ff4400"
+                : "#ff6600",
+    flags: {
+      [MODULE_ID]: {
+        isGrenadeTemplate: true,
+        grenadeType: item.getFlag(MODULE_ID, "grenadeType"),
+        scatterDistance: scatterDistance,
+        isScatter: !isSuccess,
+        damage: grenadeCfg.damage,
+        effect: grenadeCfg.effect,
+        actorId: actor.id,
+        itemId: item.id
+      }
+    }
+  };
+
+  const template = await canvas.scene.createEmbeddedDocuments("MeasuredTemplate", [templateData]);
+  
+  if (!template?.[0]) {
+    ui.notifications.error("Template-Erstellung fehlgeschlagen!");
+    return;
+  }
+
+  const templateId = template[0].id;
+
+  // Bei Streuung: Template verschieben
+  if (scatterDistance > 0) {
+    const templateDoc = canvas.templates.get(templateId);
+    if (templateDoc) {
+      const angle = Math.random() * Math.PI * 2;
+      const scatter = scatterDistance * canvas.grid.size;
+      const newX = templateDoc.x + Math.cos(angle) * scatter;
+      const newY = templateDoc.y + Math.sin(angle) * scatter;
+      await templateDoc.document.update({ x: newX, y: newY });
+    }
+  }
+
+  // Effekte anwenden
+  const effectResults = await socket.executeAsGM("applyGrenadeEffect", {
+    templateId: templateId,
+    effectType: grenadeCfg.effect,
+    damageFormula: grenadeCfg.damage
+  });
+
+  // Bei Rauchgranate: Sichtblockierung aktivieren
+  if (grenadeCfg.effect === "smoke") {
+    await socket.executeAsGM("createSmokeWall", {
+      templateId: templateId,
+      duration: 3
+    });
+  }
+
+  // Granate verbrauchen
+  await socket.executeAsGM("consumeItem", {
+    actorId: actor.id,
+    itemId: item.id
+  });
+
+  // Chat-Nachricht mit Ergebnissen
+  let messageContent = `<div style="background:#111; border:1px solid #ff6600; border-radius:6px; padding:10px; color:#ddd;">
+    <b style="color:#ff8844;">💣 ${item.name}</b><br>
+    ${isSuccess ? "✅ Präziser Wurf!" : `⚠️ Fehlwurf – streut ${scatterDistance} Fuß!`}
+    <br><br>`;
+
+  if (effectResults?.length > 0) {
+    messageContent += `<b>Betroffene Ziele:</b><br>`;
+    for (const result of effectResults) {
+      messageContent += `• <b>${result.tokenName}</b>`;
+      if (result.damage) {
+        messageContent += ` – ${result.damage} Schaden (HP: ${result.oldHP} → ${result.newHP})`;
+      }
+      if (result.effect === "stun") {
+        messageContent += ` – 💫 <span style="color:#ffff00;">Betäubt!</span>`;
+      }
+      messageContent += `<br>`;
+    }
+  } else {
+    messageContent += `<span style="color:#888;">Keine Ziele im Wirkungsbereich.</span><br>`;
+  }
+
+  if (grenadeCfg.effect === "smoke") {
+    messageContent += `<br>💨 <b style="color:#888;">Rauch blockiert Sicht für 3 Runden!</b>`;
+  }
+
+  messageContent += `</div>`;
+
+  await ChatMessage.create({
+    speaker: ChatMessage.getSpeaker({ actor }),
+    content: messageContent
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════
 // ITEM-SHEET ERWEITERUNG
 // FIX v1.4: Hooks.on("renderHowToBeAHeroItemSheet") statt libWrapper._onRender
 // Stabiler weil HTBAH diesen Hook selbst nutzt (verifiziert in how-to-be-a-hero.mjs)
@@ -617,6 +1001,33 @@ function injectHealpackField(html, item) {
   form.appendChild(row);
 }
 
+function injectGrenadeField(html, item) {
+  if (html.querySelector(".val2-grenade-row")) return;
+  const currentType = item.getFlag(MODULE_ID, "grenadeType") ?? "";
+  
+  const options = GRENADE_TYPE_OPTIONS
+    .map(o => `<option value="${o.value}" ${o.value === currentType ? "selected" : ""}>${o.label}</option>`)
+    .join("");
+
+  const row = document.createElement("div");
+  row.className = "form-group val2-grenade-row";
+  row.style.cssText = "border-top:1px solid rgba(255,102,0,.2); margin-top:10px; padding-top:10px;";
+  row.innerHTML = `
+    <label style="color:#ff8844; font-size:12px; letter-spacing:.05em; font-weight:bold;">VAL-2 GRANATENTYP</label>
+    <select class="val2-grenade-select" style="width:100%; margin-top:4px;">${options}</select>
+    <p style="color:#666; font-size:11px; margin:4px 0 0;">Granaten werden geworfen und erzeugen Templates</p>
+  `;
+  
+  row.querySelector("select").addEventListener("change", async (e) => {
+    const val = e.target.value;
+    if (val) await item.setFlag(MODULE_ID, "grenadeType", val);
+    else await item.unsetFlag(MODULE_ID, "grenadeType");
+  });
+
+  const form = html.querySelector("form") ?? html;
+  form.appendChild(row);
+}
+
 // V13 AppV2: Hook-Signatur ist (app, element, context, options)
 // "element" ist das HTMLElement der ganzen App (window), nicht nur das form
 // Wir nutzen sheet.element direkt – das ist zuverlässiger
@@ -627,7 +1038,10 @@ Hooks.on("renderHowToBeAHeroItemSheet", (sheet, _element, _context, _options) =>
   if (!el) return;
 
   if (item.type === "weapon")     injectWeaponTypeField(el, item);
-  if (item.type === "consumable") injectHealpackField(el, item);
+  if (item.type === "consumable") {
+    injectHealpackField(el, item);
+    injectGrenadeField(el, item);
+  }
 });
 
 // ═══════════════════════════════════════════════════════════════
@@ -649,6 +1063,7 @@ Hooks.once("setup", () => {
     "game.howtobeahero.HowToBeAHeroItem.prototype.roll",
     async function(wrapped, ...args) {
       if (getWeaponConfig(this))  { await handleWeaponRoll(this);  return; }
+      if (getGrenadeConfig(this)) { await handleGrenadeThrow(this); return; }
       if (getHealpackValue(this)) { await handleHealpackRoll(this); return; }
       return wrapped(...args);
     },
