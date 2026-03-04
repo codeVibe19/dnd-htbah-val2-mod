@@ -1,4 +1,4 @@
-{
+json{
   "id": "htbah-val2-combat",
   "title": "HTBAH VAL-2 Combat",
   "description": "Kampfsystem für How To Be A Hero: Multishot, Munitions-Tracking, Heilung, Auto-Schaden.",
@@ -15,5 +15,8 @@
       { "id": "lib-wrapper", "type": "module" },
       { "id": "socketlib",   "type": "module" }
     ]
-  }
+  },
+  "url": "https://github.com/codeVibe19/dnd-htbah-val2-mod",
+  "manifest": "https://raw.githubusercontent.com/codeVibe19/dnd-htbah-val2-mod/main/module.json",
+  "download": "https://github.com/codeVibe19/dnd-htbah-val2-mod/releases/download/v1.5.0/module.zip"
 }
