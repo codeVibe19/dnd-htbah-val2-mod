@@ -977,48 +977,43 @@ function injectWeaponTypeField(html, item) {
   form.appendChild(row);
 }
 
-function injectHealpackField(html, item) {
-  if (html.querySelector(".val2-healpack-row")) return;
-  const currentVal = item.getFlag(MODULE_ID, "healAmount") ?? "";
+function injectConsumableFields(html, item) {
+  if (html.querySelector(".val2-consumable-row")) return;
+  
+  const currentHeal = item.getFlag(MODULE_ID, "healAmount") ?? "";
+  const currentGrenade = item.getFlag(MODULE_ID, "grenadeType") ?? "";
+  
+  const grenadeOptions = GRENADE_TYPE_OPTIONS
+    .map(o => `<option value="${o.value}" ${o.value === currentGrenade ? "selected" : ""}>${o.label}</option>`)
+    .join("");
 
   const row = document.createElement("div");
-  row.className = "form-group val2-healpack-row";
+  row.className = "form-group val2-consumable-row";
   row.style.cssText = "border-top:1px solid rgba(68,255,178,.2); margin-top:10px; padding-top:10px;";
   row.innerHTML = `
-    <label style="color:#7ea6c8; font-size:12px; letter-spacing:.05em; font-weight:bold;">VAL-2 HEILWERT (HP)</label>
-    <input type="number" class="val2-healpack-input" value="${currentVal}"
-      min="0" placeholder="z.B. 20, 40, 60, 80"
-      style="width:100%; margin-top:4px;" />
-    <p style="color:#666; font-size:11px; margin:4px 0 0;">Leer lassen = kein Heilpack</p>
+    <div style="display:flex; gap:12px;">
+      <div style="flex:1;">
+        <label style="color:#7ea6c8; font-size:11px; letter-spacing:.05em; font-weight:bold;">VAL-2 HEILWERT (HP)</label>
+        <input type="number" class="val2-healpack-input" value="${currentHeal}"
+          min="0" placeholder="20, 40, 60, 80"
+          style="width:100%; margin-top:4px; font-size:12px;" />
+        <p style="color:#666; font-size:10px; margin:2px 0 0;">Leer = kein Heilpack</p>
+      </div>
+      <div style="flex:1;">
+        <label style="color:#ff8844; font-size:11px; letter-spacing:.05em; font-weight:bold;">VAL-2 GRANATENTYP</label>
+        <select class="val2-grenade-select" style="width:100%; margin-top:4px; font-size:12px;">${grenadeOptions}</select>
+        <p style="color:#666; font-size:10px; margin:2px 0 0;">Granaten mit Templates</p>
+      </div>
+    </div>
   `;
-  row.querySelector("input").addEventListener("change", async (e) => {
+  
+  row.querySelector(".val2-healpack-input").addEventListener("change", async (e) => {
     const val = parseInt(e.target.value);
     if (val > 0) await item.setFlag(MODULE_ID, "healAmount", val);
     else await item.unsetFlag(MODULE_ID, "healAmount");
   });
-
-  const form = html.querySelector("form") ?? html;
-  form.appendChild(row);
-}
-
-function injectGrenadeField(html, item) {
-  if (html.querySelector(".val2-grenade-row")) return;
-  const currentType = item.getFlag(MODULE_ID, "grenadeType") ?? "";
   
-  const options = GRENADE_TYPE_OPTIONS
-    .map(o => `<option value="${o.value}" ${o.value === currentType ? "selected" : ""}>${o.label}</option>`)
-    .join("");
-
-  const row = document.createElement("div");
-  row.className = "form-group val2-grenade-row";
-  row.style.cssText = "border-top:1px solid rgba(255,102,0,.2); margin-top:10px; padding-top:10px;";
-  row.innerHTML = `
-    <label style="color:#ff8844; font-size:12px; letter-spacing:.05em; font-weight:bold;">VAL-2 GRANATENTYP</label>
-    <select class="val2-grenade-select" style="width:100%; margin-top:4px;">${options}</select>
-    <p style="color:#666; font-size:11px; margin:4px 0 0;">Granaten werden geworfen und erzeugen Templates</p>
-  `;
-  
-  row.querySelector("select").addEventListener("change", async (e) => {
+  row.querySelector(".val2-grenade-select").addEventListener("change", async (e) => {
     const val = e.target.value;
     if (val) await item.setFlag(MODULE_ID, "grenadeType", val);
     else await item.unsetFlag(MODULE_ID, "grenadeType");
@@ -1038,10 +1033,7 @@ Hooks.on("renderHowToBeAHeroItemSheet", (sheet, _element, _context, _options) =>
   if (!el) return;
 
   if (item.type === "weapon")     injectWeaponTypeField(el, item);
-  if (item.type === "consumable") {
-    injectHealpackField(el, item);
-    injectGrenadeField(el, item);
-  }
+  if (item.type === "consumable") injectConsumableFields(el, item);
 });
 
 // ═══════════════════════════════════════════════════════════════
