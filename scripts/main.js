@@ -874,7 +874,7 @@ async function handleGrenadeThrow(item) {
     user: game.user.id,
     x: targetX,
     y: targetY,
-    distance: grenadeCfg.size,
+    distance: grenadeCfg.size / (canvas.grid.distance || 5),
     fillColor: grenadeCfg.effect === "smoke" ? "#666666"
                 : grenadeCfg.effect === "stun" ? "#ffff00"
                 : grenadeCfg.effect === "burn" ? "#ff4400"
