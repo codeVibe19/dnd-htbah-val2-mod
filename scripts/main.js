@@ -55,9 +55,9 @@ const WEAPON_TYPE_OPTIONS = [
 // GRANATEN-KONFIGURATION
 // ═══════════════════════════════════════════════════════════════
 const GRENADE_CONFIG = new Map([
-  ["frag",   { label: "Splittergranate",   type: "circle", size: 10, damage: "4d8", effect: null }],
-  ["flash",  { label: "Blendgranate",      type: "circle", size: 15, damage: null,  effect: "stun" }],
-  ["smoke",  { label: "Rauchgranate",      type: "circle", size: 20, damage: null,  effect: "smoke" }],
+  ["frag",   { label: "Splittergranate",   type: "circle", size: 5, damage: "4d8", effect: null }],
+  ["flash",  { label: "Blendgranate",      type: "circle", size: 10, damage: null,  effect: "stun" }],
+  ["smoke",  { label: "Rauchgranate",      type: "circle", size: 5, damage: null,  effect: "smoke" }],
   ["incen",  { label: "Brandgranate",      type: "circle", size: 10, damage: "3d8", effect: "burn" }],
 ]);
 
