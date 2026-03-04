@@ -27,6 +27,7 @@ const WEAPON_CONFIG = new Map([
   ["ar",                  { label: "Sturmgewehr",            dice: "3d8", magazine: 30,  firemode: "auto" }],
   ["sr",                  { label: "Repetiergewehr",         dice: "4d8", magazine: 1,   firemode: "semi" }],
   ["sg",                  { label: "Schrotflinte",           dice: "5d8", magazine: 5,   firemode: "semi" }],
+  ["kompositbogen",       { label: "Kompositbogen",          dice: "3d8", magazine: 12,  firemode: "semi" }],
   ["pistole-laser",       { label: "Pistole Laser",          dice: "2d8", magazine: 8,   firemode: "semi" }],
   ["smg-laser",           { label: "Maschinenpistole Laser", dice: "3d8", magazine: 20,  firemode: "auto" }],
   ["ar-laser",            { label: "Sturmgewehr Laser",      dice: "4d8", magazine: 30,  firemode: "auto" }],
@@ -80,6 +81,7 @@ const AMMO_TYPE = new Map([
   ["ar",                  "Mittlere Munition"],
   ["sr",                  "Schwere Munition"],
   ["sg",                  "Schwere Munition"],
+  ["kompositbogen",       "Pfeile"],
   ["pistole-laser",       "Energiezellen"],
   ["smg-laser",           "Energiezellen"],
   ["ar-laser",            "Energiezellen"],
@@ -845,9 +847,9 @@ async function handleGrenadeThrow(item) {
   }
 
   // Template-Platzierung initiieren
-  ui.notifications.info(`🎯 Klicke auf die Karte, um die ${item.name} zu platzieren.`);
+  ui.notifications.info(`🎯 Klicke auf die Karte, um die ${item.name} zu platzieren. (Rechtsklick = Abbrechen)`);
 
-  // Template-Vorschau erstellen und auf Platzierung warten
+  // Interaktive Template-Vorschau erstellen
   const templateData = {
     t: grenadeCfg.type,
     user: game.user.id,
@@ -870,24 +872,31 @@ async function handleGrenadeThrow(item) {
     }
   };
 
-  const template = await canvas.scene.createEmbeddedDocuments("MeasuredTemplate", [templateData]);
+  // Template-Preview erstellen (interaktiv)
+  const templateDoc = new MeasuredTemplateDocument(templateData, { parent: canvas.scene });
+  const template = new game.measuredTemplates.documentClass.implementation(templateDoc);
   
-  if (!template?.[0]) {
-    ui.notifications.error("Template-Erstellung fehlgeschlagen!");
+  // drawPreview() gibt die finale Position zurück (oder null bei Abbruch)
+  const finalTemplate = await template.drawPreview();
+  
+  if (!finalTemplate) {
+    ui.notifications.warn("Granaten-Wurf abgebrochen.");
     return;
   }
 
-  const templateId = template[0].id;
+  const templateId = finalTemplate.id;
 
-  // Bei Streuung: Template verschieben
+  // Bei Streuung: Template nach Platzierung verschieben
   if (scatterDistance > 0) {
-    const templateDoc = canvas.templates.get(templateId);
-    if (templateDoc) {
+    const placedTemplate = canvas.templates.get(templateId);
+    if (placedTemplate) {
       const angle = Math.random() * Math.PI * 2;
       const scatter = scatterDistance * canvas.grid.size;
-      const newX = templateDoc.x + Math.cos(angle) * scatter;
-      const newY = templateDoc.y + Math.sin(angle) * scatter;
-      await templateDoc.document.update({ x: newX, y: newY });
+      const newX = placedTemplate.document.x + Math.cos(angle) * scatter;
+      const newY = placedTemplate.document.y + Math.sin(angle) * scatter;
+      await placedTemplate.document.update({ x: newX, y: newY });
+      
+      ui.notifications.warn(`💥 Granate streut ${scatterDistance} Fuß in zufällige Richtung!`);
     }
   }
 
