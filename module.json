@@ -2,7 +2,7 @@
   "id": "htbah-val2-combat",
   "title": "HTBAH VAL-2 Combat",
   "description": "Kampfsystem für How To Be A Hero: Multishot, Munitions-Tracking, Heilung, Auto-Schaden, Granaten.",
-  "version": "1.6.0",
+  "version": "1.6.1",
   "compatibility": {
     "minimum": "13",
     "verified": "13"
