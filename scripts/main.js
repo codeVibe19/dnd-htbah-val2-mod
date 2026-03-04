@@ -800,6 +800,15 @@ async function handleGrenadeThrow(item) {
     return;
   }
 
+  // Ziel prüfen (wie bei Waffen)
+  const targets = getTargetTokens();
+  if (!targets.length) {
+    ui.notifications.warn(`🎯 Bitte ein Ziel anvisieren, bevor du die ${item.name} wirfst!`);
+    return;
+  }
+
+  const target = targets[0];
+
   const choice = await showGrenadeDialog(actor, grenadeCfg, item.name, qty);
   if (!choice) return;
 
@@ -828,6 +837,7 @@ async function handleGrenadeThrow(item) {
 
   const flavorParts = [
     `<b>${item.name} werfen</b>`,
+    `Ziel: ${target.name}`,
     `${skillName} (${skillValue})`,
     isCrit ? `<span style="color:#ffd700; font-weight:bold;">🎯 PERFEKTER WURF!</span>` : ""
   ].filter(Boolean).join(" | ");
@@ -846,13 +856,24 @@ async function handleGrenadeThrow(item) {
     });
   }
 
-  // Template-Platzierung initiieren
-  ui.notifications.info(`🎯 Klicke auf die Karte, um die ${item.name} zu platzieren. (Rechtsklick = Abbrechen)`);
+  // Template direkt beim Ziel erstellen
+  let targetX = target.center.x;
+  let targetY = target.center.y;
 
-  // Interaktive Template-Vorschau erstellen
+  // Bei Streuung: Position verschieben
+  if (scatterDistance > 0) {
+    const angle = Math.random() * Math.PI * 2;
+    const scatter = scatterDistance * canvas.grid.size;
+    targetX += Math.cos(angle) * scatter;
+    targetY += Math.sin(angle) * scatter;
+    ui.notifications.warn(`💥 Granate streut ${scatterDistance} Fuß in zufällige Richtung!`);
+  }
+
   const templateData = {
     t: grenadeCfg.type,
     user: game.user.id,
+    x: targetX,
+    y: targetY,
     distance: grenadeCfg.size,
     fillColor: grenadeCfg.effect === "smoke" ? "#666666"
                 : grenadeCfg.effect === "stun" ? "#ffff00"
@@ -872,33 +893,14 @@ async function handleGrenadeThrow(item) {
     }
   };
 
-  // Template-Preview erstellen (interaktiv)
-  const templateDoc = new MeasuredTemplateDocument(templateData, { parent: canvas.scene });
-  const template = new game.measuredTemplates.documentClass.implementation(templateDoc);
+  const template = await canvas.scene.createEmbeddedDocuments("MeasuredTemplate", [templateData]);
   
-  // drawPreview() gibt die finale Position zurück (oder null bei Abbruch)
-  const finalTemplate = await template.drawPreview();
-  
-  if (!finalTemplate) {
-    ui.notifications.warn("Granaten-Wurf abgebrochen.");
+  if (!template?.[0]) {
+    ui.notifications.error("Template-Erstellung fehlgeschlagen!");
     return;
   }
 
-  const templateId = finalTemplate.id;
-
-  // Bei Streuung: Template nach Platzierung verschieben
-  if (scatterDistance > 0) {
-    const placedTemplate = canvas.templates.get(templateId);
-    if (placedTemplate) {
-      const angle = Math.random() * Math.PI * 2;
-      const scatter = scatterDistance * canvas.grid.size;
-      const newX = placedTemplate.document.x + Math.cos(angle) * scatter;
-      const newY = placedTemplate.document.y + Math.sin(angle) * scatter;
-      await placedTemplate.document.update({ x: newX, y: newY });
-      
-      ui.notifications.warn(`💥 Granate streut ${scatterDistance} Fuß in zufällige Richtung!`);
-    }
-  }
+  const templateId = template[0].id;
 
   // Effekte anwenden
   const effectResults = await socket.executeAsGM("applyGrenadeEffect", {
