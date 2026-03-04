@@ -7,7 +7,7 @@
     "minimum": "13",
     "verified": "13"
   },
-  "authors": [{ "name": "Fakte" }],
+  "authors": [{ "name": "Fakte" }, { "name": "codeVibe19" }],
   "esmodules": ["scripts/main.js"],
   "socket": true,
   "relationships": {
@@ -15,5 +15,8 @@
       { "id": "lib-wrapper", "type": "module" },
       { "id": "socketlib",   "type": "module" }
     ]
-  }
+  },
+  "url": "https://github.com/codeVibe19/dnd-htbah-val2-mod",
+  "manifest": "https://raw.githubusercontent.com/codeVibe19/dnd-htbah-val2-mod/main/module.json",
+  "download": "https://github.com/codeVibe19/dnd-htbah-val2-mod/releases/download/v1.5.0/module.zip"
 }
