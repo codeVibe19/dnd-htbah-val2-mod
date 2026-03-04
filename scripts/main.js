@@ -615,7 +615,7 @@ async function handleWeaponRoll(item) {
   }
 
   const choice = await showAttackDialog(actor, cfg, item.name, currentAmmo);
-  if (!choice) return;
+  if (!choice || !choice.skillId) return;
 
   const skillItem = actor.items.get(choice.skillId);
   if (!skillItem) { ui.notifications.error(`${MODULE_ID} | Skill nicht gefunden.`); return; }
@@ -810,7 +810,7 @@ async function handleGrenadeThrow(item) {
   const target = targets[0];
 
   const choice = await showGrenadeDialog(actor, grenadeCfg, item.name, qty);
-  if (!choice) return;
+  if (!choice || !choice.skillId) return;
 
   const skillItem = actor.items.get(choice.skillId);
   if (!skillItem) {
