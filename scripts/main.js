@@ -1,18 +1,6 @@
 /**
- * HTBAH VAL-2 Combat v1.8.3
+ * HTBAH VAL-2 Combat v1.8.2
  * Foundry V13 | Requires: lib-wrapper, socketlib
- *
- * Neu in v1.8.3:
- * - Skill-Werte werden jetzt direkt aus dem Dialog genommen (behebt Zielwert 0)
- * - Skills-Liste wird im Dialog-Result gespeichert und wiederverwendet
- * 
- * Neu in v1.8.2:
- * - "Handeln (Gesamt)" nutzt jetzt actionTotal statt nur Mod (verhindert Zielwert 0)
- * 
- * Neu in v1.8.1:
- * - libWrapper auf OVERRIDE geändert (Granaten benötigen keine Targets mehr)
- * - Rauch occlusion.mode auf 1 (FADE) korrigiert statt 2 (verhindert Fehler)
- * - Brandgranaten werden jetzt auch nach 5s automatisch entfernt
  * 
  * Neu in v1.8:
  * - Skill-Würfe nutzen system.total (enthält bereits Handeln-Mod)
@@ -154,13 +142,6 @@ function getCurrentAmmo(item) {
 function getActionSkills(actor) {
   // mod = Math.round(summe aller action-skills / 10) → wird von HTBAH auf system.total addiert
   const actionMod = actor.skillSetData?.action?.mod ?? 0;
-  let actionTotal = actor.skillSetData?.action?.totalValue ?? 0;
-  
-  // Fallback: Wenn totalValue nicht verfügbar, berechne manuell oder nutze system.attributes
-  if (actionTotal === 0) {
-    // Versuche system.attributes.skillSets.action.value als Fallback
-    actionTotal = Number(actor.system?.attributes?.skillSets?.action?.value ?? 0);
-  }
 
   const skills = actor.items
     .filter(i =>
@@ -181,19 +162,14 @@ function getActionSkills(actor) {
     })
     .sort((a, b) => a.name.localeCompare(b.name, "de"));
 
-  // Wenn immer noch 0, berechne Summe aller Skills manuell
-  if (actionTotal === 0 && skills.length > 0) {
-    actionTotal = skills.reduce((sum, s) => sum + s.total, 0);
-  }
-
-  // Blanker Handeln-Eintrag (totalValue = alle Skills zusammen)
-  if (actionTotal > 0) {
+  // Dies ist der Fallback wenn man keinen passenden Skill hat
+  if (actionMod > 0) {
     skills.unshift({
       id:    "__action_base__",
-      name:  "Handeln (Gesamt)",
-      value: actionTotal,
-      base:  actionTotal,
-      total: actionTotal
+      name:  "Handeln (Basis)",
+      value: actionMod,
+      base:  actionMod,
+      total: actionMod
     });
   }
 
