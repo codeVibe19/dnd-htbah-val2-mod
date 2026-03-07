@@ -1,7 +1,10 @@
 /**
- * HTBAH VAL-2 Combat v1.8.1
+ * HTBAH VAL-2 Combat v1.8.2
  * Foundry V13 | Requires: lib-wrapper, socketlib
  *
+ * Neu in v1.8.2:
+ * - "Handeln (Gesamt)" nutzt jetzt actionTotal statt nur Mod (verhindert Zielwert 0)
+ * 
  * Neu in v1.8.1:
  * - libWrapper auf OVERRIDE geändert (Granaten benötigen keine Targets mehr)
  * - Rauch occlusion.mode auf 1 (FADE) korrigiert statt 2 (verhindert Fehler)
@@ -168,14 +171,14 @@ function getActionSkills(actor) {
     })
     .sort((a, b) => a.name.localeCompare(b.name, "de"));
 
-  // Blanker Handeln-Eintrag (nur mod, kein Skill-Item)
-  if (actionMod > 0) {
+  // Blanker Handeln-Eintrag (totalValue = alle Skills zusammen)
+  if (actionTotal > 0) {
     skills.unshift({
       id:    "__action_base__",
-      name:  "Handeln (Basis)",
-      value: actionMod,
-      base:  actionMod,
-      total: actionMod
+      name:  "Handeln (Gesamt)",
+      value: actionTotal,
+      base:  actionTotal,
+      total: actionTotal
     });
   }
 
@@ -804,12 +807,13 @@ async function handleWeaponRoll(item) {
 
   // Handeln-Mod auslesen
   const actionMod = actor.skillSetData?.action?.mod ?? 0;
+  const actionTotal = actor.skillSetData?.action?.totalValue ?? 0;
 
   let skillName, skillBase, skillTotal;
   if (choice.skillId === "__action_base__") {
-    skillName = "Handeln (Basis)";
-    skillBase = Number(actor.system?.attributes?.skillSets?.action?.value ?? 0);
-    skillTotal = skillBase; // Nur Basis-Wert, kein Skill-Item
+    skillName = "Handeln (Gesamt)";
+    skillBase = actionTotal;
+    skillTotal = actionTotal; // Gesamt-Handeln-Wert
   } else {
     const skillItem = actor.items.get(choice.skillId);
     if (!skillItem) { ui.notifications.error(`${MODULE_ID} | Skill nicht gefunden.`); return; }
@@ -1015,12 +1019,13 @@ async function handleGrenadeThrow(item) {
 
   // Handeln-Mod auslesen
   const actionMod = actor.skillSetData?.action?.mod ?? 0;
+  const actionTotal = actor.skillSetData?.action?.totalValue ?? 0;
 
   let skillName, skillBase, skillTotal;
   if (choice.skillId === "__action_base__") {
-    skillName  = "Handeln (Basis)";
-    skillBase  = Number(actor.system?.attributes?.skillSets?.action?.value ?? 0);
-    skillTotal = skillBase; // Nur Basis-Wert
+    skillName  = "Handeln (Gesamt)";
+    skillBase  = actionTotal;
+    skillTotal = actionTotal; // Gesamt-Handeln-Wert
   } else {
     const skillItem = actor.items.get(choice.skillId);
     if (!skillItem) { ui.notifications.error(`${MODULE_ID} | Skill nicht gefunden.`); return; }
