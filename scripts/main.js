@@ -1,5 +1,5 @@
 /**
- * HTBAH VAL-2 Combat v1.8.2
+ * HTBAH VAL-2 Combat v1.8.6
  * Foundry V13 | Requires: lib-wrapper, socketlib
  * 
  * Neu in v1.8:
