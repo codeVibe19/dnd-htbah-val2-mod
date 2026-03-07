@@ -1,6 +1,19 @@
 /**
- * HTBAH VAL-2 Combat v1.6
+ * HTBAH VAL-2 Combat v1.8
  * Foundry V13 | Requires: lib-wrapper, socketlib
+ *
+ * Neu in v1.8:
+ * - Skill-Würfe addieren jetzt korrekt den Handeln-Allgemeinwert
+ * - Rauchgranaten blockieren jetzt Sicht (occlusion mode 2)
+ * - Chat zeigt Skill-Berechnung an (Skill + Handeln-Mod)
+ * 
+ * Neu in v1.7:
+ * - 0 HP → Dead Status automatisch gesetzt
+ * - Unter 10 HP → Unconscious Status automatisch gesetzt
+ * - Granatenradius korrekt in Scene Units
+ * - Streuung korrekt von Fuß → Pixel umgerechnet
+ * - Rauch läuft automatisch nach 3 Runden ab
+ * - Rüstungslogik in Hilfsfunktionen ausgelagert
  *
  * Neu in v1.6:
  * - Granaten-System mit Templates
@@ -55,10 +68,10 @@ const WEAPON_TYPE_OPTIONS = [
 // GRANATEN-KONFIGURATION
 // ═══════════════════════════════════════════════════════════════
 const GRENADE_CONFIG = new Map([
-  ["frag",   { label: "Splittergranate",   type: "circle", size: 5, damage: "4d8", effect: null }],
-  ["flash",  { label: "Blendgranate",      type: "circle", size: 10, damage: null,  effect: "stun" }],
-  ["smoke",  { label: "Rauchgranate",      type: "circle", size: 5, damage: null,  effect: "smoke" }],
-  ["incen",  { label: "Brandgranate",      type: "circle", size: 10, damage: "3d8", effect: "burn" }],
+  ["frag",   { label: "Splittergranate",   type: "circle", size: 2, damage: "4d8", effect: null }],
+  ["flash",  { label: "Blendgranate",      type: "circle", size: 2, damage: null,  effect: "blind" }],
+  ["smoke",  { label: "Rauchgranate",      type: "circle", size: 4, damage: null,  effect: "smoke" }],
+  ["incen",  { label: "Brandgranate",      type: "circle", size: 3, damage: "3d8", effect: "burn" }],
 ]);
 
 const GRENADE_TYPE_OPTIONS = [
@@ -75,6 +88,8 @@ const HEALPACK_NAMES = new Map([
 ]);
 
 // Munitionstyp pro Waffe → Item-Name im Inventar des Spielers
+const SMOKE_TILE_IMG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAQAAAAAYLlVAAAEr0lEQVR4nOWbaU8UQRiE+8d2IofcoHhfqHjft6IiqyIoaPyB9m66dmqLt3t6JiQm9IcKyc7Abj1db/WyO+O8nz8VNBU0HTQbdDpoLmg+aCFoMWgpaDloJWg1aC3oTNTZoPWgc1Hnoy5EXYy61EP4Xfwt/G0813p8fryWtfj6VuLrXYqvfyH6mYv+ZqPfKRfNz/Qwbxln02zkctSVDsLvKBCGYYHoAmHGZVa+zTjMwzivtBq+KrqWkZ5rAeFkAAReUw7EEQiup/mccTUNY9cN3SBZxxUKw8iBKIbgjsG8ZVxNw+RGBykYhmGB6AXBFZjvajxl+ibpVkZ8Xg5GFxBJCO4YzFvG2TSbuy3aJOkxhcIwLBC9IDjftH0X8zrjbJxX2TJ6p0AWGE4Hg9CO6AJh0flmq2szn1r1lHE1fJd0LyM+T4GUgOA0tEFYcr6JPhdeH/OWcTV8n/TAEB9XICkQXSFwMS4730Sf277EvBqHeRhn02zyYYEUCsMACB2NjUIIvDusON9En7c6nnk1n1r1lHGYekR6nBGfx0ByIDQNCoE7gbfIVeftubcKr9S8ZRzmnpCeGuLjDMQC0QUCF+NEHzhvz71l3or9ZoFxNfysQAqkDYQFQccBECb6wHk7+pj7nPnUqrNxNf086kVGOMeCwSCsNOQgaB+MUgAAGn2ee7R9ycqreTX9kvTKEB9XGCUQNAnYHaw+GKXA+cnWz819m3nLOFaVDb8WvTEeYyCcDAXRBiHXB6NRcJnV1+hz4ZWah3E2O9TbjHAOw+BEtEHgYtRROJICl1l9K/qY+67m2fS7qPeGcIxhdIVg9YGOwjgFAFC6+og+z7yat4yz6Q+iLeMxhaEgFAJ3go5CNgXOTzZ/avU1+lx4JeZhfCvqY0Y4h0G0QeBi1FHIpWAMoM/qI/ocezXPKw7jn6I+G8IxgOBEKAQeBx2F4hQ4b+/73Pyp1Uf0eeYt82wcRrejvpDwGMNgEAqBO0FHwUqB7gij9wUMwIp/bvURfS68NvNsescQw2iDwMXIo5BLwZExGALg9uf4W82fWn1EHzOv5mEcRgdBXw0NBMa2AQGdoKNgpUB3BB2DMYCS+Kdmn6PPhWeZh/FvUd9JeIxBKAQuRh6FXBdkx8D5yfm32p/jr82fW33E3jI/NLxrCCAUAsYhlwLdEXQMrN1gDIDn32p/vPHR+Fuzj+hj5tk8jP+I2iPhMYBgCOgEjILVBToG/MbI2g1GPdAGIDX/qfinVh8rD/NDw/tBP0n7BGLXN0nIpSA1BqkeyAJIFSBvfzz/vPVx/HX2B76JvZr/RVIIGIeBt7uAx4B3A+4B3g7NIiwFkNr+eP65/Dj+uvowfxB0SDogCFYKeAx4S0z1gBZhEYCSHaAUAMcfs79HKz80/TvoT/x56Jsk7PnJLuAx6AvA2gmOBUCqAEsADM3/jT+7ALCK8L8BOFEJqL4Dqt4Fqn8fUPU7war/F6j+v8HqPw+o/hOh6j8TrP5T4eq/F6j+m6Hqvxus/tvh6q8PqP4KkeqvEar+KrHqrxOs/krR6q8Vrv5q8ervF6j+jpHq7xmq/q6x6u8brP7O0emeEE7MvcNTvuK7x/8B98AERoxYHPgAAAAASUVORK5CYII=";
+
 const AMMO_TYPE = new Map([
   ["pistole",             "Leichte Munition"],
   ["smg",                 "Leichte Munition"],
@@ -125,22 +140,87 @@ function getCurrentAmmo(item) {
 }
 
 function getActionSkills(actor) {
-  return actor.items
+  // mod = Math.round(summe aller action-skills / 10) → wird von HTBAH auf system.total addiert
+  const actionMod = actor.skillSetData?.action?.mod ?? 0;
+  const actionTotal = actor.skillSetData?.action?.totalValue ?? 0;
+
+  const skills = actor.items
     .filter(i =>
       i.type === "ability" &&
       i.system?.skillSet === "action" &&
-      Number.isFinite(Number(i.system?.value ?? i.system?.wert ?? NaN))
+      Number.isFinite(Number(i.system?.value ?? NaN))
     )
-    .map(i => ({
-      id:    i.id,
-      name:  i.name,
-      value: Number(i.system?.value ?? i.system?.wert ?? 0)
-    }))
+    .map(i => {
+      const base  = Number(i.system?.value ?? 0);
+      const total = Number(i.system?.total ?? (base + actionMod)); // system.total = value + mod
+      return {
+        id:    i.id,
+        name:  i.name,
+        value: total,  // Würfelwert = total (99)
+        base,
+        total
+      };
+    })
     .sort((a, b) => a.name.localeCompare(b.name, "de"));
+
+  // Blanker Handeln-Eintrag (nur mod, kein Skill-Item)
+  if (actionMod > 0) {
+    skills.unshift({
+      id:    "__action_base__",
+      name:  "Handeln (Basis)",
+      value: actionMod,
+      base:  actionMod,
+      total: actionMod
+    });
+  }
+
+  return skills;
 }
 
 function getTargetTokens() {
   return Array.from(game.user.targets ?? []).filter(t => t?.actor);
+}
+
+function sceneUnitsToPixels(units) {
+  const gridDistance = Number(canvas?.scene?.grid?.distance ?? canvas?.grid?.distance ?? 5);
+  const gridSize = Number(canvas?.scene?.grid?.size ?? canvas?.grid?.size ?? 100);
+  if (!gridDistance || !gridSize) return units;
+  return (units / gridDistance) * gridSize;
+}
+
+function getArmorThreshold(actor) {
+  const armorValue = actor?.system?.attributes?.armor?.value ?? 0;
+  return armorValue === 1 ? 2
+       : armorValue === 2 ? 4
+       : armorValue === 3 ? 6
+       : 0;
+}
+
+function getArmorLabel(actor) {
+  const armorValue = actor?.system?.attributes?.armor?.value ?? 0;
+  return armorValue === 1 ? "Leichte Rüstung"
+       : armorValue === 2 ? "Mittlere Rüstung"
+       : armorValue === 3 ? "Schwere Rüstung"
+       : null;
+}
+
+function extractDiceResults(roll) {
+  const term = roll?.terms?.find(t => Array.isArray(t?.results));
+  return term?.results?.map(r => Number(r.result) || 0) ?? [Number(roll?.total) || 0];
+}
+
+function applyArmorToDiceResults(diceResults, armorThreshold) {
+  const afterArmor = diceResults.map(r => r <= armorThreshold ? 0 : r);
+  const blockedDice = diceResults.filter(r => r <= armorThreshold).length;
+  const finalDamage = afterArmor.reduce((a, b) => a + b, 0);
+  return { afterArmor, blockedDice, finalDamage };
+}
+
+function getGrenadeFillColor(effect) {
+  return effect === "smoke" ? "#666666"
+       : effect === "stun"  ? "#ffff00"
+       : effect === "burn"  ? "#ff4400"
+       : "#ff6600";
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -248,13 +328,12 @@ async function gmReloadFromPool({ actorId, itemId, weaponType }) {
 async function gmCreateGrenadeTemplate({ x, y, templateType, distance, fillColor, isScatter, scatterDistance }) {
   let finalX = x;
   let finalY = y;
-  
-  // Bei Streuung: zufällige Richtung und Distanz
+
   if (isScatter && scatterDistance > 0) {
     const angle = Math.random() * Math.PI * 2;
-    const scatter = scatterDistance * canvas.grid.size;
-    finalX += Math.cos(angle) * scatter;
-    finalY += Math.sin(angle) * scatter;
+    const scatterPx = sceneUnitsToPixels(scatterDistance);
+    finalX += Math.cos(angle) * scatterPx;
+    finalY += Math.sin(angle) * scatterPx;
   }
 
   const templateData = {
@@ -262,7 +341,7 @@ async function gmCreateGrenadeTemplate({ x, y, templateType, distance, fillColor
     user: game.user.id,
     x: finalX,
     y: finalY,
-    distance: distance,
+    distance: Number(distance),
     fillColor: fillColor || "#ff6600",
     flags: {
       [MODULE_ID]: {
@@ -271,8 +350,8 @@ async function gmCreateGrenadeTemplate({ x, y, templateType, distance, fillColor
     }
   };
 
-  const template = await canvas.scene.createEmbeddedDocuments("MeasuredTemplate", [templateData]);
-  return template[0]?.id;
+  const created = await canvas.scene.createEmbeddedDocuments("MeasuredTemplate", [templateData]);
+  return created[0]?.id ?? null;
 }
 
 /**
@@ -284,14 +363,22 @@ async function gmCreateGrenadeTemplate({ x, y, templateType, distance, fillColor
  * @returns {Promise<object[]>} Array von Ergebnissen pro Token
  */
 async function gmApplyGrenadeEffect({ templateId, effectType, damageFormula }) {
-  const template = canvas.templates.get(templateId);
-  if (!template) return { error: "template_not_found" };
+  const templateDoc = canvas.scene.templates.get(templateId);
+  if (!templateDoc) return { error: "template_not_found" };
 
-  // Tokens im Template finden
+  const template = canvas.templates.get(templateId);
+
+  // Radius in Pixeln berechnen
+  const gridSize     = canvas.scene.grid.size ?? 100;
+  const radiusPx     = templateDoc.distance * gridSize;
+  const templateX    = templateDoc.x;
+  const templateY    = templateDoc.y;
+
   const tokensInTemplate = canvas.tokens.placeables.filter(token => {
     if (!token.actor) return false;
-    const point = { x: token.center.x, y: token.center.y };
-    return template.object.shape.contains(point.x - template.x, point.y - template.y);
+    const dx = token.center.x - templateX;
+    const dy = token.center.y - templateY;
+    return Math.sqrt(dx * dx + dy * dy) <= radiusPx;
   });
 
   const results = [];
@@ -299,45 +386,68 @@ async function gmApplyGrenadeEffect({ templateId, effectType, damageFormula }) {
   for (const token of tokensInTemplate) {
     const result = { tokenId: token.id, tokenName: token.name };
 
-    // Schaden anwenden
     if (damageFormula) {
       const dmgRoll = await new Roll(damageFormula).evaluate();
-      const damage = dmgRoll.total;
-      
-      // Rüstung berücksichtigen
-      const armorValue = token.actor?.system?.attributes?.armor?.value ?? 0;
-      const armorThreshold = armorValue === 1 ? 2 : armorValue === 2 ? 4 : armorValue === 3 ? 6 : 0;
-      
-      const diceResults = dmgRoll.terms[0]?.results?.map(r => r.result) ?? [damage];
-      const afterArmor = diceResults.map(r => r <= armorThreshold ? 0 : r);
-      const finalDmg = afterArmor.reduce((a, b) => a + b, 0);
-      
+      const diceResults = extractDiceResults(dmgRoll);
+      const armorThreshold = getArmorThreshold(token.actor);
+      const { blockedDice, finalDamage } = applyArmorToDiceResults(diceResults, armorThreshold);
+
       const hp = token.actor.system.attributes.health;
-      const newHP = Math.max(0, hp.value - finalDmg);
+      const newHP = Math.max(0, hp.value - finalDamage);
       await token.actor.update({ "system.attributes.health.value": newHP });
-      
-      result.damage = finalDmg;
+
+      result.damage = finalDamage;
       result.oldHP = hp.value;
       result.newHP = newHP;
+      result.blockedDice = blockedDice;
+      result.armorThreshold = armorThreshold;
+      result.armorLabel = getArmorLabel(token.actor);
     }
 
-    // Statuseffekt anwenden (stun)
     if (effectType === "stun") {
-      const stunEffect = {
-        name: "Betäubt",
-        icon: "icons/svg/daze.svg",
-        flags: {
-          [MODULE_ID]: { isStun: true }
-        },
-        changes: [],
-        duration: { rounds: 2 }
-      };
-      
-      // Prüfen ob HTBAH-System Stun-Status hat, sonst als Active Effect
       const existingStun = token.actor.effects.find(e => e.flags?.[MODULE_ID]?.isStun);
       if (!existingStun) {
-        await token.actor.createEmbeddedDocuments("ActiveEffect", [stunEffect]);
+        // HTBAH-native stunned Condition (setzt stun + incapacitated)
+        await token.actor.createEmbeddedDocuments("ActiveEffect", [{
+          name: "Betäubt",
+          icon: "systems/how-to-be-a-hero/ui/icons/svg/statuses/stunned.svg",
+          flags: { [MODULE_ID]: { isStun: true }, htbah: { isCondition: true, conditionId: "stunned" } },
+          statuses: ["stun", "incapacitated"],
+          changes: [],
+          duration: {
+            rounds:     2,
+            startRound: game.combat?.round ?? 0,
+            combat:     game.combat?.id ?? null
+          }
+        }]);
         result.effect = "stun";
+      }
+    }
+
+    if (effectType === "blind") {
+      // HTBAH-native blinded Condition
+      const existingBlind = token.actor.effects.find(e => e.flags?.htbah?.conditionId === "blinded");
+      if (!existingBlind) {
+        await token.actor.createEmbeddedDocuments("ActiveEffect", [{
+          name: "Geblendet",
+          icon: "systems/how-to-be-a-hero/ui/icons/svg/statuses/blinded.svg",
+          flags: { htbah: { isCondition: true, conditionId: "blinded" } },
+          statuses: ["blind"],
+          changes: [],
+          duration: {
+            rounds:     1,
+            startRound: game.combat?.round ?? 0,
+            combat:     game.combat?.id ?? null
+          }
+        }]);
+        // Sicht sperren (Bewegung bleibt frei) — via GM-Socket
+        const origSight = token.document.getFlag(MODULE_ID, "originalSight");
+        await socket.executeAsGM("applyTokenRestrictions", {
+          tokenId:      token.document.id,
+          sightEnabled: false,
+          ...(origSight === undefined ? { origSight: token.document.sight?.enabled ?? true } : {})
+        });
+        result.effect = "blind";
       }
     }
 
@@ -350,15 +460,61 @@ async function gmApplyGrenadeEffect({ templateId, effectType, damageFormula }) {
 /**
  * Rauchgranaten-Template mit Sichtblockierung erstellen
  */
-async function gmCreateSmokeWall({ templateId, duration }) {
-  const template = canvas.templates.get(templateId);
-  if (!template) return { error: "template_not_found" };
+async function gmCreateSmokeTile({ templateId, duration, smokeTextureSrc }) {
+  const templateDoc = canvas.scene.templates.get(templateId);
+  if (!templateDoc) return { error: "template_not_found" };
 
-  // Template mit Wand-Flagge markieren für Sichtblockierung
-  await template.document.setFlag(MODULE_ID, "blockVision", true);
-  await template.document.setFlag(MODULE_ID, "smokeUntilRound", game.combat?.round + (duration || 3));
-  
-  return { success: true, templateId };
+  smokeTextureSrc = smokeTextureSrc || SMOKE_TILE_IMG;
+
+  const currentRound   = Number(game.combat?.round ?? 0);
+  const expiresOnRound = currentRound + Number(duration || 3);
+
+  // Radius in Pixeln — templateDoc.distance ist in Feldern (V13)
+  const gridSize = canvas.scene.grid.size ?? 100;
+  const radiusPx = templateDoc.distance * gridSize;
+  const diameter = radiusPx * 2;
+  const tileX    = templateDoc.x - radiusPx;
+  const tileY    = templateDoc.y - radiusPx;
+
+  // V13 TileData: Rauch blockiert Sicht durch occlusion.mode = 2 (ROOF/VISION)
+  const tileData = {
+    x:         tileX,
+    y:         tileY,
+    width:     diameter,
+    height:    diameter,
+    elevation: 1,                        // > 0 → Overhead-Layer
+    sort:      9999,                     // Über allem anderen
+    alpha:     0.9,                      // Dichter Rauch (höhere Deckkraft)
+    texture:   { src: smokeTextureSrc },
+    occlusion: {
+      mode:  2,                          // 2 = ROOF → blockiert Sicht komplett
+      alpha: 0.8,                        // Sicht-Blockierung Stärke
+      radius: null                       // Kein radialer Fade
+    },
+    restrictions: {
+      light: true,                       // blockiert Licht
+      weather: true                      // blockiert Wetter
+    },
+    flags: {
+      [MODULE_ID]: {
+        isSmokeTile:     true,
+        smokeTemplateId: templateId,
+        smokeUntilRound: expiresOnRound
+      }
+    }
+  };
+
+  const created = await canvas.scene.createEmbeddedDocuments("Tile", [tileData]);
+  const tileId  = created[0]?.id ?? null;
+
+  await templateDoc.setFlag(MODULE_ID, "isSmokeTemplate", true);
+  await templateDoc.setFlag(MODULE_ID, "smokeUntilRound", expiresOnRound);
+  await templateDoc.setFlag(MODULE_ID, "smokeTileId",     tileId);
+
+  // Sicht neu berechnen
+  canvas.perception.update({ refreshVision: true, refreshLighting: true });
+
+  return { success: true, templateId, tileId, expiresOnRound };
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -375,8 +531,11 @@ Hooks.once("socketlib.ready", () => {
   socket.register("consumeItem",    gmConsumeItem);
   socket.register("reloadFromPool", gmReloadFromPool);
   socket.register("createGrenadeTemplate", gmCreateGrenadeTemplate);
-  socket.register("applyGrenadeEffect", gmApplyGrenadeEffect);
-  socket.register("createSmokeWall", gmCreateSmokeWall);
+  socket.register("applyGrenadeEffect",    gmApplyGrenadeEffect);
+  socket.register("createSmokeTile",           gmCreateSmokeTile);
+  socket.register("applyBlindedCondition",     gmApplyBlindedCondition);
+  socket.register("applyTokenRestrictions",    gmApplyTokenRestrictions);
+  socket.register("removeTokenRestrictions",   gmRemoveTokenRestrictions);
   console.log(`${MODULE_ID} | socketlib bereit.`);
 });
 
@@ -396,9 +555,9 @@ async function showAttackDialog(actor, weaponCfg, weaponName, currentAmmo) {
     return null;
   }
 
-  const skillOptions = skills
-    .map(s => `<option value="${s.id}">${s.name} (${s.value})</option>`)
-    .join("");
+  const skillOptions = skills.map(s =>
+    `<option value="${s.id}">${s.name} (${s.value})</option>`
+  ).join("");
 
   const ammoInfo = currentAmmo !== null
     ? `<p style="margin:8px 0 0; color:#7ea6c8; font-size:0.9em;">🔹 Magazin: <b>${currentAmmo} / ${weaponCfg.magazine}</b></p>`
@@ -460,6 +619,10 @@ async function showAttackDialog(actor, weaponCfg, weaponName, currentAmmo) {
           if (!skillId) return null;
           return { skillId, firemode, bullets };
         }
+      },
+      {
+        label: "🔄 Nachladen", action: "reload",
+        callback: () => ({ reload: true })
       },
       { label: "Abbrechen", action: "cancel", callback: () => null }
     ],
@@ -535,13 +698,14 @@ async function showGrenadeDialog(actor, grenadeCfg, grenadeName, quantity) {
     return null;
   }
 
-  const skillOptions = skills
-    .map(s => `<option value="${s.id}">${s.name} (${s.value})</option>`)
-    .join("");
+  const skillOptions = skills.map(s =>
+    `<option value="${s.id}">${s.name} (${s.value})</option>`
+  ).join("");
 
-  const effectInfo = grenadeCfg.effect === "stun" ? "💫 Betäubt Ziele für 2 Runden"
-                   : grenadeCfg.effect === "smoke" ? "💨 Blockiert Sicht für 3 Runden"
-                   : grenadeCfg.effect === "burn" ? "🔥 Verursacht Brandschaden"
+  const effectInfo = grenadeCfg.effect === "stun"  ? "💫 Betäubt Ziele für 2 Runden"
+                   : grenadeCfg.effect === "blind" ? "🌟 Blendet Ziele für 1 Runde"
+                   : grenadeCfg.effect === "smoke" ? "💨 Rauch für 3 Runden"
+                   : grenadeCfg.effect === "burn"  ? "🔥 Brennt"
                    : "";
 
   const damageInfo = grenadeCfg.damage ? `💥 Schaden: ${grenadeCfg.damage}` : "";
@@ -593,6 +757,11 @@ async function handleWeaponRoll(item) {
   const actor = item.actor;
   if (!actor) return;
 
+  if (isActorIncapacitated(actor)) {
+    ui.notifications.warn(`❌ ${actor.name} ist handlungsunfähig und kann nicht angreifen.`);
+    return;
+  }
+
   const cfg = getWeaponConfig(item);
   if (!cfg) return;
 
@@ -615,26 +784,48 @@ async function handleWeaponRoll(item) {
   }
 
   const choice = await showAttackDialog(actor, cfg, item.name, currentAmmo);
-  if (!choice || !choice.skillId) return;
+  if (!choice) return;
 
-  const skillItem = actor.items.get(choice.skillId);
-  if (!skillItem) { ui.notifications.error(`${MODULE_ID} | Skill nicht gefunden.`); return; }
+  // Reload direkt aus dem Angriffs-Dialog
+  if (choice.reload) {
+    const confirmed = await showReloadDialog(actor, item, weaponType, currentAmmo ?? 0, cfg.magazine);
+    if (confirmed) {
+      await socket.executeAsGM("reloadFromPool", { actorId: actor.id, itemId: item.id });
+    }
+    return;
+  }
 
+  if (!choice.skillId) return;
+
+  // Handeln-Mod auslesen (wird auf alle Action-Skills addiert)
+  const actionMod = actor.skillSetData?.action?.mod ?? 0;
+
+  let skillName, skillBase, skillValue;
+  if (choice.skillId === "__action_base__") {
+    skillName = "Handeln (Basis)";
+    skillBase = Number(actor.system?.attributes?.skillSets?.action?.value ?? 0);
+    skillValue = skillBase; // Nur Basis-Wert, kein Skill-Item
+  } else {
+    const skillItem = actor.items.get(choice.skillId);
+    if (!skillItem) { ui.notifications.error(`${MODULE_ID} | Skill nicht gefunden.`); return; }
+    skillName = skillItem.name;
+    skillBase = Number(skillItem.system?.value ?? 0);
+    // HTBAH: Würfelwert = Skill-Wert + Allgemeinwert (Handeln-Mod)
+    skillValue = skillBase + actionMod;
+  }
+  const base = skillValue;
   // FIX v1.4: Bullets auf verfügbare Munition clampen
   let bullets = choice.bullets;
   if (currentAmmo !== null && choice.firemode === "auto") {
     bullets = Math.min(bullets, currentAmmo);
     if (bullets < 2) {
-      // Zu wenig Munition für Auto – auf Semi reduzieren
       ui.notifications.warn(`⚠️ Nur noch ${currentAmmo} Schuss – wechsle auf Semi.`);
       bullets = Math.min(1, currentAmmo);
       choice.firemode = "semi";
     }
   }
 
-  const skillName = skillItem.name;
-  const base      = Number(skillItem.system?.value ?? skillItem.system?.wert ?? 0);
-  const mod       = (bullets - 1) * 10;
+  const mod    = (bullets - 1) * 10;
   const target    = Math.max(0, base - mod);
   const modText   = mod > 0 ? `−${mod}` : "±0";
 
@@ -655,7 +846,9 @@ async function handleWeaponRoll(item) {
 
   const flavorParts = [
     `<b>${item.name}</b>`,
-    `${skillName} (${base})`,
+    actionMod > 0 && choice.skillId !== "__action_base__"
+      ? `${skillName} (${skillBase} + ${actionMod} Handeln = ${base})`
+      : `${skillName} (${base})`,
     bullets > 1 ? `${bullets} Kugeln | Mod: ${modText}` : "",
     `Zielwert: <b>${target}</b>`,
     isCrit ? `<span style="color:#ffd700; font-weight:bold;">🎯 KRITISCH!</span>` : ""
@@ -760,6 +953,11 @@ async function handleHealpackRoll(item) {
   const actor = item.actor;
   if (!actor) return;
 
+  if (isActorIncapacitated(actor)) {
+    ui.notifications.warn(`❌ ${actor.name} ist handlungsunfähig und kann keinen Heilpack benutzen.`);
+    return;
+  }
+
   const healAmount = getHealpackValue(item);
   if (!healAmount) return;
 
@@ -791,6 +989,11 @@ async function handleGrenadeThrow(item) {
   const actor = item.actor;
   if (!actor) return;
 
+  if (isActorIncapacitated(actor)) {
+    ui.notifications.warn(`❌ ${actor.name} ist handlungsunfähig und kann keine Granate werfen.`);
+    return;
+  }
+
   const grenadeCfg = getGrenadeConfig(item);
   if (!grenadeCfg) return;
 
@@ -800,144 +1003,193 @@ async function handleGrenadeThrow(item) {
     return;
   }
 
-  // Ziel prüfen (wie bei Waffen)
-  const targets = getTargetTokens();
-  if (!targets.length) {
-    ui.notifications.warn(`🎯 Bitte ein Ziel anvisieren, bevor du die ${item.name} wirfst!`);
-    return;
-  }
-
-  const target = targets[0];
-
+  // ── Schritt 1: Skill-Dialog ────────────────────────────────────────
   const choice = await showGrenadeDialog(actor, grenadeCfg, item.name, qty);
   if (!choice || !choice.skillId) return;
 
-  const skillItem = actor.items.get(choice.skillId);
-  if (!skillItem) {
-    ui.notifications.error(`${MODULE_ID} | Skill nicht gefunden.`);
-    return;
+  // Handeln-Mod auslesen (wird auf alle Action-Skills addiert)
+  const actionMod = actor.skillSetData?.action?.mod ?? 0;
+
+  let skillName, skillBase, skillTotal;
+  if (choice.skillId === "__action_base__") {
+    skillName  = "Handeln (Basis)";
+    skillBase  = Number(actor.system?.attributes?.skillSets?.action?.value ?? 0);
+    skillTotal = skillBase; // Nur Basis-Wert, kein Skill-Item
+  } else {
+    const skillItem = actor.items.get(choice.skillId);
+    if (!skillItem) { ui.notifications.error(`${MODULE_ID} | Skill nicht gefunden.`); return; }
+    skillName  = skillItem.name;
+    skillBase  = Number(skillItem.system?.value ?? 0);
+    // HTBAH: Würfelwert = Skill-Wert + Allgemeinwert (Handeln-Mod)
+    skillTotal = skillBase + actionMod;
   }
 
-  const skillName = skillItem.name;
-  const skillValue = Number(skillItem.system?.value ?? skillItem.system?.wert ?? 0);
+  // ── Schritt 2: Wurf-Check ──────────────────────────────────────────
 
-  // Wurf durchführen
   const throwRoll = await new Roll("1d100").evaluate();
-  const rolled = throwRoll.total;
-  const isSuccess = rolled <= skillValue;
-  const isCrit = rolled <= 10;
+  const rolled    = throwRoll.total;
+  const isSuccess = rolled <= skillTotal;
+  const isCrit    = rolled <= 10;
 
-  // Streuung bei Fehlwurf
   let scatterDistance = 0;
-  let scatterRoll = null;
+  let scatterRoll     = null;
+
   if (!isSuccess) {
-    scatterRoll = await new Roll("1d6").evaluate();
+    scatterRoll     = await new Roll("1d6").evaluate();
     scatterDistance = scatterRoll.total;
   }
 
-  const flavorParts = [
-    `<b>${item.name} werfen</b>`,
-    `Ziel: ${target.name}`,
-    `${skillName} (${skillValue})`,
-    isCrit ? `<span style="color:#ffd700; font-weight:bold;">🎯 PERFEKTER WURF!</span>` : ""
-  ].filter(Boolean).join(" | ");
-
   await throwRoll.toMessage({
-    speaker: ChatMessage.getSpeaker({ actor }),
-    flavor: flavorParts,
+    speaker:  ChatMessage.getSpeaker({ actor }),
+    flavor:   [`<b>${item.name} werfen</b>`,
+               actionMod > 0 ? `${skillName} (${skillBase} + ${actionMod} Handeln = ${skillTotal})` : `${skillName} (${skillTotal})`,
+               isCrit ? `<span style="color:#ffd700;">🎯 PERFEKTER WURF!</span>` : ""].filter(Boolean).join(" | "),
     rollMode: game.settings.get("core", "rollMode")
   });
 
   if (scatterRoll) {
     await scatterRoll.toMessage({
-      speaker: ChatMessage.getSpeaker({ actor }),
-      flavor: `<b>⚠️ Fehlwurf!</b> Granate streut ${scatterDistance} Fuß`,
+      speaker:  ChatMessage.getSpeaker({ actor }),
+      flavor:   `<b>⚠️ Fehlwurf!</b> Granate streut ${scatterDistance} Fuß`,
       rollMode: game.settings.get("core", "rollMode")
     });
   }
 
-  // Template direkt beim Ziel erstellen
-  let targetX = target.center.x;
-  let targetY = target.center.y;
+  // ── Schritt 3: Click-to-Place ──────────────────────────────────────
+  // User klickt auf die Karte → Template wird dort erstellt → Bestätigung
+  ui.notifications.info(`🎯 ${item.name}: Klicke auf die Karte um die Granate zu platzieren. Rechtsklick = Abbrechen.`);
 
-  // Bei Streuung: Position verschieben
-  if (scatterDistance > 0) {
-    const angle = Math.random() * Math.PI * 2;
-    const scatter = scatterDistance * canvas.grid.size;
-    targetX += Math.cos(angle) * scatter;
-    targetY += Math.sin(angle) * scatter;
-    ui.notifications.warn(`💥 Granate streut ${scatterDistance} Fuß in zufällige Richtung!`);
+  const clickPos = await new Promise((resolve) => {
+    const layer = canvas.templates;
+
+    const onClick = (event) => {
+      if (event.button === 2) { resolve(null); cleanup(); return; }
+      const pos = event.data?.getLocalPosition?.(canvas.stage) ?? canvas.mousePosition;
+      resolve({ x: pos.x, y: pos.y });
+      cleanup();
+    };
+
+    const onRightClick = () => { resolve(null); cleanup(); };
+
+    const cleanup = () => {
+      canvas.stage.off("pointerdown", onClick);
+      canvas.stage.off("rightdown",   onRightClick);
+    };
+
+    canvas.stage.on("pointerdown", onClick);
+    canvas.stage.on("rightdown",   onRightClick);
+  });
+
+  if (!clickPos) {
+    ui.notifications.info("Granaten-Wurf abgebrochen.");
+    return;
   }
 
-  const templateData = {
-    t: grenadeCfg.type,
-    user: game.user.id,
-    x: targetX,
-    y: targetY,
-    distance: grenadeCfg.size / (canvas.grid.distance || 5),
-    fillColor: grenadeCfg.effect === "smoke" ? "#666666"
-                : grenadeCfg.effect === "stun" ? "#ffff00"
-                : grenadeCfg.effect === "burn" ? "#ff4400"
-                : "#ff6600",
-    flags: {
-      [MODULE_ID]: {
-        isGrenadeTemplate: true,
-        grenadeType: item.getFlag(MODULE_ID, "grenadeType"),
-        scatterDistance: scatterDistance,
-        isScatter: !isSuccess,
-        damage: grenadeCfg.damage,
-        effect: grenadeCfg.effect,
-        actorId: actor.id,
-        itemId: item.id
+  let placedTemplate = null;
+  try {
+    const templateData = {
+      t:         grenadeCfg.type,
+      user:      game.user.id,
+      x:         clickPos.x,
+      y:         clickPos.y,
+      distance:  Number(grenadeCfg.size),
+      fillColor: getGrenadeFillColor(grenadeCfg.effect),
+      flags: {
+        [MODULE_ID]: {
+          isGrenadeTemplate: true,
+          grenadeType:       item.getFlag(MODULE_ID, "grenadeType"),
+          scatterDistance,
+          isScatter:         !isSuccess,
+          damage:            grenadeCfg.damage,
+          effect:            grenadeCfg.effect,
+          actorId:           actor.id,
+          itemId:            item.id
+        }
       }
-    }
-  };
+    };
 
-  const template = await canvas.scene.createEmbeddedDocuments("MeasuredTemplate", [templateData]);
-  
-  if (!template?.[0]) {
+    const created = await canvas.scene.createEmbeddedDocuments("MeasuredTemplate", [templateData]);
+    placedTemplate = created?.[0];
+  } catch(e) {
+    console.error(`${MODULE_ID} | Template-Erstellung Fehler:`, e);
     ui.notifications.error("Template-Erstellung fehlgeschlagen!");
     return;
   }
 
-  const templateId = template[0].id;
+  if (!placedTemplate?.id) {
+    ui.notifications.error("Template-Erstellung fehlgeschlagen!");
+    return;
+  }
 
-  // Effekte anwenden
+  const templateId = placedTemplate.id;
+
+  // ── Schritt 4: Streuung auf platziertes Template anwenden ──────────
+  if (scatterDistance > 0) {
+    const angle     = Math.random() * Math.PI * 2;
+    const scatterPx = sceneUnitsToPixels(scatterDistance);
+    await placedTemplate.update({
+      x: placedTemplate.x + Math.cos(angle) * scatterPx,
+      y: placedTemplate.y + Math.sin(angle) * scatterPx
+    });
+    ui.notifications.warn(`💥 Granate streut ${scatterDistance} Fuß in zufällige Richtung!`);
+  }
+
+  // ── Schritt 5: Bestätigungs-Dialog ────────────────────────────────
+  const confirmed = await foundry.applications.api.DialogV2.confirm({
+    window: { title: `${item.name} — Werfen bestätigen` },
+    content: `<p>Template ist platziert${scatterDistance > 0 ? ` (streut ${scatterDistance} Fuß)` : ""}.<br>
+              Granate jetzt auswerten?</p>`,
+    yes: { label: "💣 Werfen!", icon: "fa-bomb" },
+    no:  { label: "Abbrechen", icon: "fa-times" }
+  });
+
+  if (!confirmed) {
+    await canvas.scene.deleteEmbeddedDocuments("MeasuredTemplate", [templateId]);
+    return;
+  }
+
+  // ── Schritt 6: Effekte auswerten ───────────────────────────────────
   const effectResults = await socket.executeAsGM("applyGrenadeEffect", {
-    templateId: templateId,
-    effectType: grenadeCfg.effect,
+    templateId,
+    effectType:    grenadeCfg.effect,
     damageFormula: grenadeCfg.damage
   });
 
-  // Bei Rauchgranate: Sichtblockierung aktivieren
   if (grenadeCfg.effect === "smoke") {
-    await socket.executeAsGM("createSmokeWall", {
-      templateId: templateId,
-      duration: 3
-    });
+    const smokeTextureSrc = item.getFlag(MODULE_ID, "smokeTexture") || null;
+    await socket.executeAsGM("createSmokeTile", { templateId, duration: 3, smokeTextureSrc });
   }
 
-  // Granate verbrauchen
-  await socket.executeAsGM("consumeItem", {
-    actorId: actor.id,
-    itemId: item.id
-  });
+  await socket.executeAsGM("consumeItem", { actorId: actor.id, itemId: item.id });
 
-  // Chat-Nachricht mit Ergebnissen
+  // Blend + Splitter: Template nach 5 Sekunden löschen
+  if (grenadeCfg.effect === "blind" || grenadeCfg.effect === null) {
+    setTimeout(async () => {
+      await canvas.scene.deleteEmbeddedDocuments("MeasuredTemplate", [templateId]);
+    }, 5000);
+  }
+
   let messageContent = `<div style="background:#111; border:1px solid #ff6600; border-radius:6px; padding:10px; color:#ddd;">
     <b style="color:#ff8844;">💣 ${item.name}</b><br>
     ${isSuccess ? "✅ Präziser Wurf!" : `⚠️ Fehlwurf – streut ${scatterDistance} Fuß!`}
     <br><br>`;
 
-  if (effectResults?.length > 0) {
+  if (Array.isArray(effectResults) && effectResults.length > 0) {
     messageContent += `<b>Betroffene Ziele:</b><br>`;
     for (const result of effectResults) {
       messageContent += `• <b>${result.tokenName}</b>`;
-      if (result.damage) {
+      if (typeof result.damage === "number") {
         messageContent += ` – ${result.damage} Schaden (HP: ${result.oldHP} → ${result.newHP})`;
+        if (result.armorLabel) {
+          messageContent += ` – 🛡️ ${result.armorLabel}`;
+          if (result.blockedDice > 0) messageContent += ` (${result.blockedDice} Würfel negiert)`;
+        }
       }
       if (result.effect === "stun") {
         messageContent += ` – 💫 <span style="color:#ffff00;">Betäubt!</span>`;
+      }
+      if (result.effect === "blind") {
+        messageContent += ` – 🌟 <span style="color:#ffffaa;">Geblendet!</span>`;
       }
       messageContent += `<br>`;
     }
@@ -946,7 +1198,7 @@ async function handleGrenadeThrow(item) {
   }
 
   if (grenadeCfg.effect === "smoke") {
-    messageContent += `<br>💨 <b style="color:#888;">Rauch blockiert Sicht für 3 Runden!</b>`;
+    messageContent += `<br>💨 <b style="color:#888;">Rauch bleibt 3 Runden liegen.</b>`;
   }
 
   messageContent += `</div>`;
@@ -955,6 +1207,286 @@ async function handleGrenadeThrow(item) {
     speaker: ChatMessage.getSpeaker({ actor }),
     content: messageContent
   });
+}
+
+// ═══════════════════════════════════════════════════════════════
+// RAUCH-CLEANUP
+// ═══════════════════════════════════════════════════════════════
+
+async function cleanupExpiredSmokeTemplates() {
+  if (!game.user.isGM || !canvas?.scene || !game.combat) return;
+
+  const currentRound = Number(game.combat.round ?? 0);
+  if (!currentRound) return;
+
+  const expiredTemplates = canvas.scene.templates.filter(t => {
+    const isSmoke    = t.getFlag(MODULE_ID, "isSmokeTemplate");
+    const untilRound = Number(t.getFlag(MODULE_ID, "smokeUntilRound") ?? 0);
+    return isSmoke && untilRound > 0 && currentRound >= untilRound;
+  });
+
+  if (!expiredTemplates.length) return;
+
+  const templateIds = expiredTemplates.map(t => t.id);
+  const tileIds     = expiredTemplates
+    .map(t => t.getFlag(MODULE_ID, "smokeTileId"))
+    .filter(Boolean);
+
+  if (tileIds.length)     await canvas.scene.deleteEmbeddedDocuments("Tile",             tileIds);
+  if (templateIds.length) await canvas.scene.deleteEmbeddedDocuments("MeasuredTemplate", templateIds);
+
+  await ChatMessage.create({
+    content: `<div style="background:#111; border:1px solid #666; border-radius:6px; padding:8px; color:#aaa;">
+      💨 Rauch verzieht sich.
+    </div>`
+  });
+}
+
+Hooks.on("updateCombat", async (combat, changed) => {
+  if (!game.user.isGM) return;
+  if (!("round" in changed)) return;
+  await cleanupExpiredSmokeTemplates();
+});
+
+// ═══════════════════════════════════════════════════════════════
+// HP-STATUS — HTBAH conditionManager Integration
+// Nutzt native HTBAH-Conditions statt toggleEffect
+//
+// HTBAH condition IDs (aus config.mjs):
+//   dead          → statuses: ["dead"]
+//   incapacitated → statuses: ["incapacitated"]        (Kampfunfähig)
+//   unconscious   → statuses: ["unconscious","incapacitated","prone"]
+//   stunned       → statuses: ["stun","incapacitated"]
+//   blinded       → statuses: ["blind"]                (Blendgranate)
+//   prone         → statuses: ["prone"]                (Liegend, optional)
+// ═══════════════════════════════════════════════════════════════
+
+// Status-IDs die Handlungsunfähigkeit bedeuten
+const INCAPACITATED_STATUS_IDS = ["dead", "incapacitated", "unconscious", "stun"];
+
+// HTBAH conditionManager holen (verfügbar nach ready)
+function getCondMgr() {
+  return game.howtobeahero?.conditionManager ?? null;
+}
+
+// Condition per HTBAH-Manager setzen
+async function htbahAddCondition(actor, conditionKey) {
+  const mgr = getCondMgr();
+  if (!mgr) {
+    console.warn(`${MODULE_ID} | conditionManager nicht verfügbar`);
+    return;
+  }
+  const condData = mgr.getConditionData(conditionKey);
+  if (!condData) {
+    console.warn(`${MODULE_ID} | Condition nicht gefunden: ${conditionKey}`);
+    return;
+  }
+  await mgr.addCondition(actor, condData);
+}
+
+// Condition per HTBAH-Manager entfernen
+async function htbahRemoveCondition(actor, conditionKey) {
+  const mgr = getCondMgr();
+  if (!mgr) return;
+  const condData = mgr.getConditionData(conditionKey);
+  if (!condData) return;
+  await mgr.removeCondition(actor, condData);
+}
+
+// Prüft ob Actor eine bestimmte HTBAH-Condition hat
+function htbahHasCondition(actor, conditionKey) {
+  const mgr = getCondMgr();
+  if (!mgr) return actor.statuses?.has(conditionKey) ?? false;
+  const condData = mgr.getConditionData(conditionKey);
+  if (!condData) return false;
+  return mgr.isConditionActive(actor, condData);
+}
+
+// ── GM-Funktionen für Token-Sicht/Bewegung (brauchen GM-Rechte) ──
+
+async function gmApplyTokenRestrictions({ tokenId, sightEnabled, movementLocked, origSight, origMovement }) {
+  const tokenDoc = canvas.tokens?.get(tokenId)?.document
+                ?? game.scenes.active?.tokens?.get(tokenId);
+  if (!tokenDoc) return;
+  const updates = {};
+  if (sightEnabled    !== undefined) updates["sight.enabled"]   = sightEnabled;
+  if (movementLocked  !== undefined) updates["movement.locked"] = movementLocked;
+  if (Object.keys(updates).length) await tokenDoc.update(updates);
+  if (origSight    !== undefined) await tokenDoc.setFlag(MODULE_ID, "originalSight",    origSight);
+  if (origMovement !== undefined) await tokenDoc.setFlag(MODULE_ID, "originalMovement", origMovement);
+  canvas.perception.update({ refreshVision: true });
+}
+
+async function gmRemoveTokenRestrictions({ tokenId }) {
+  const tokenDoc = canvas.tokens?.get(tokenId)?.document
+                ?? game.scenes.active?.tokens?.get(tokenId);
+  if (!tokenDoc) return;
+  const actor = tokenDoc.actor;
+  if (!actor) return;
+  const stillIncap = INCAPACITATED_STATUS_IDS.some(id => actor.statuses?.has(id));
+  if (stillIncap) return;
+  const origSight    = tokenDoc.getFlag(MODULE_ID, "originalSight")    ?? true;
+  const origMovement = tokenDoc.getFlag(MODULE_ID, "originalMovement") ?? false;
+  await tokenDoc.update({ "sight.enabled": origSight, "movement.locked": origMovement });
+  await tokenDoc.unsetFlag(MODULE_ID, "originalSight");
+  await tokenDoc.unsetFlag(MODULE_ID, "originalMovement");
+  canvas.perception.update({ refreshVision: true });
+}
+
+// Original Token-Werte sichern bevor wir sperren
+async function saveTokenOriginalValues(tokenDoc) {
+  const already = tokenDoc.getFlag(MODULE_ID, "originalSight");
+  if (already !== undefined) return;
+  // Flags können auch vom Player gesetzt werden
+  await tokenDoc.setFlag(MODULE_ID, "originalSight",    tokenDoc.sight?.enabled ?? true);
+  await tokenDoc.setFlag(MODULE_ID, "originalMovement", tokenDoc.movement?.locked ?? false);
+}
+
+async function applyIncapacitatedState(tokenDoc) {
+  const origSight    = tokenDoc.getFlag(MODULE_ID, "originalSight");
+  const origMovement = tokenDoc.getFlag(MODULE_ID, "originalMovement");
+  // Nur originale Werte übergeben wenn noch nicht gesichert
+  const payload = {
+    tokenId:        tokenDoc.id,
+    sightEnabled:   false,
+    movementLocked: true,
+    ...(origSight    === undefined ? { origSight:    tokenDoc.sight?.enabled  ?? true  } : {}),
+    ...(origMovement === undefined ? { origMovement: tokenDoc.movement?.locked ?? false } : {})
+  };
+  if (game.user.isGM) {
+    await gmApplyTokenRestrictions(payload);
+  } else {
+    await socket.executeAsGM("applyTokenRestrictions", payload);
+  }
+}
+
+async function removeIncapacitatedState(tokenDoc) {
+  if (game.user.isGM) {
+    await gmRemoveTokenRestrictions({ tokenId: tokenDoc.id });
+  } else {
+    await socket.executeAsGM("removeTokenRestrictions", { tokenId: tokenDoc.id });
+  }
+}
+
+// Prüft ob Actor handlungsunfähig ist (für Aktionsblock)
+function isActorIncapacitated(actor) {
+  return INCAPACITATED_STATUS_IDS.some(id => actor.statuses?.has(id));
+}
+
+// ── updateActor Hook: HP → Dead / Unconscious ───────────────────
+
+Hooks.on("updateActor", async (actor, changes) => {
+  const hp = changes?.system?.attributes?.health?.value;
+  if (hp === undefined) return;
+
+  const token = actor.getActiveTokens()[0];
+  if (!token) return;
+
+  if (hp <= 0) {
+    // Tot: dead + incapacitated setzen, unconscious entfernen
+    const isDead = htbahHasCondition(actor, "dead");
+    if (!isDead) {
+      await htbahAddCondition(actor, "dead");
+      await htbahAddCondition(actor, "incapacitated");
+      await htbahRemoveCondition(actor, "unconscious");
+      await applyIncapacitatedState(token.document);
+      await ChatMessage.create({
+        content: `<div style="background:#111; border:1px solid #cc2222; border-radius:6px; padding:8px; color:#ddd;">
+          💀 <b>${actor.name}</b> ist <b style="color:#e94560;">kampfunfähig / tot</b> (0 HP).
+        </div>`
+      });
+    }
+  } else if (hp < 10) {
+    // Bewusstlos — nur wenn nicht bereits dead
+    const isDead = htbahHasCondition(actor, "dead");
+    if (!isDead) {
+      const isUncon = htbahHasCondition(actor, "unconscious");
+      if (!isUncon) {
+        await htbahAddCondition(actor, "unconscious"); // setzt auch incapacitated + prone
+        await applyIncapacitatedState(token.document);
+        await ChatMessage.create({
+          content: `<div style="background:#111; border:1px solid #ff9800; border-radius:6px; padding:8px; color:#ddd;">
+            😵 <b>${actor.name}</b> ist <b style="color:#ff9800;">bewusstlos</b> (unter 10 HP).
+          </div>`
+        });
+      }
+    }
+  } else {
+    // HP ≥ 10 → Unconscious aufheben (Dead bleibt manuell)
+    const wasUncon = htbahHasCondition(actor, "unconscious");
+    if (wasUncon) {
+      await htbahRemoveCondition(actor, "unconscious"); // entfernt auch incapacitated + prone
+      await removeIncapacitatedState(token.document);
+      await ChatMessage.create({
+        content: `<div style="background:#111; border:1px solid #44ffb2; border-radius:6px; padding:8px; color:#ddd;">
+          💚 <b>${actor.name}</b> ist wieder bei Bewusstsein (HP: ${hp}).
+        </div>`
+      });
+    }
+  }
+});
+
+// ── deleteActiveEffect Hook: Stunned läuft ab → freigeben ───────
+
+Hooks.on("deleteActiveEffect", async (effect) => {
+  const actor = effect.parent;
+  if (!actor?.getActiveTokens) return;
+  const token = actor.getActiveTokens()[0];
+
+  // Stun abgelaufen
+  if (effect.flags?.[MODULE_ID]?.isStun) {
+    if (!token) return;
+    await htbahRemoveCondition(actor, "stunned");
+    await removeIncapacitatedState(token.document);
+    await ChatMessage.create({
+      content: `<div style="background:#111; border:1px solid #7ea6c8; border-radius:6px; padding:8px; color:#ddd;">
+        ✅ <b>${actor.name}</b> ist nicht mehr betäubt.
+      </div>`
+    });
+  }
+
+  // Blinded abgelaufen → Sicht freigeben (Bewegung war nie gesperrt)
+  if (effect.flags?.htbah?.conditionId === "blinded") {
+    if (token) {
+      const stillIncap = INCAPACITATED_STATUS_IDS.some(id => actor.statuses?.has(id));
+      if (!stillIncap) {
+        const origSight = token.document.getFlag(MODULE_ID, "originalSight") ?? true;
+        if (game.user.isGM) {
+          await token.document.update({ "sight.enabled": origSight });
+          await token.document.unsetFlag(MODULE_ID, "originalSight");
+          canvas.perception.update({ refreshVision: true });
+        } else {
+          await socket.executeAsGM("removeTokenRestrictions", { tokenId: token.document.id });
+        }
+      }
+    }
+    await ChatMessage.create({
+      content: `<div style="background:#111; border:1px solid #ffffaa; border-radius:6px; padding:8px; color:#ddd;">
+        👁️ <b>${actor.name}</b> ist nicht mehr geblendet.
+      </div>`
+    });
+  }
+});
+
+// ── createActiveEffect Hook: Stunned wird gesetzt → sperren ─────
+
+Hooks.on("createActiveEffect", async (effect) => {
+  if (!effect.flags?.[MODULE_ID]?.isStun) return;
+  const actor = effect.parent;
+  if (!actor) return;
+  const token = actor.getActiveTokens()[0];
+  if (!token) return;
+
+  await htbahAddCondition(actor, "stunned"); // setzt stun + incapacitated
+  await applyIncapacitatedState(token.document);
+});
+
+// ── Blendgranate: blinded-Condition setzen ──────────────────────
+// Wird aus gmApplyGrenadeEffect via Socket aufgerufen
+async function gmApplyBlindedCondition({ actorId }) {
+  const actor = game.actors.get(actorId);
+  if (!actor) return;
+  await htbahAddCondition(actor, "blinded");
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -991,12 +1523,23 @@ function injectWeaponTypeField(html, item) {
 function injectConsumableFields(html, item) {
   if (html.querySelector(".val2-consumable-row")) return;
   
-  const currentHeal = item.getFlag(MODULE_ID, "healAmount") ?? "";
-  const currentGrenade = item.getFlag(MODULE_ID, "grenadeType") ?? "";
-  
+  const currentHeal    = item.getFlag(MODULE_ID, "healAmount")   ?? "";
+  const currentGrenade = item.getFlag(MODULE_ID, "grenadeType")  ?? "";
+  const currentSmokeTx = item.getFlag(MODULE_ID, "smokeTexture") ?? "";
+
   const grenadeOptions = GRENADE_TYPE_OPTIONS
     .map(o => `<option value="${o.value}" ${o.value === currentGrenade ? "selected" : ""}>${o.label}</option>`)
     .join("");
+
+  const smokeTextureRow = `
+    <div style="margin-top:8px;" class="val2-smoke-texture-row">
+      <label style="color:#888; font-size:10px; letter-spacing:.05em; font-weight:bold;">RAUCH-TEXTUR (Dateipfad)</label>
+      <input type="text" class="val2-smoke-texture-input" value="${currentSmokeTx}"
+        placeholder="modules/htbah-val2-combat/smoke.png"
+        style="width:100%; margin-top:4px; font-size:11px;" />
+      <p style="color:#555; font-size:10px; margin:2px 0 0;">Nur für Rauchgranaten. Leer = graue Standardtextur</p>
+    </div>
+  `;
 
   const row = document.createElement("div");
   row.className = "form-group val2-consumable-row";
@@ -1016,19 +1559,29 @@ function injectConsumableFields(html, item) {
         <p style="color:#666; font-size:10px; margin:2px 0 0;">Granaten mit Templates</p>
       </div>
     </div>
+    ${smokeTextureRow}
   `;
-  
+
   row.querySelector(".val2-healpack-input").addEventListener("change", async (e) => {
     const val = parseInt(e.target.value);
     if (val > 0) await item.setFlag(MODULE_ID, "healAmount", val);
     else await item.unsetFlag(MODULE_ID, "healAmount");
   });
-  
+
   row.querySelector(".val2-grenade-select").addEventListener("change", async (e) => {
     const val = e.target.value;
     if (val) await item.setFlag(MODULE_ID, "grenadeType", val);
     else await item.unsetFlag(MODULE_ID, "grenadeType");
   });
+
+  const txInput = row.querySelector(".val2-smoke-texture-input");
+  if (txInput) {
+    txInput.addEventListener("change", async (e) => {
+      const path = e.target.value.trim();
+      if (path) await item.setFlag(MODULE_ID, "smokeTexture", path);
+      else await item.unsetFlag(MODULE_ID, "smokeTexture");
+    });
+  }
 
   const form = html.querySelector("form") ?? html;
   form.appendChild(row);
