@@ -1,7 +1,11 @@
 /**
- * HTBAH VAL-2 Combat v1.8.2
+ * HTBAH VAL-2 Combat v1.8.3
  * Foundry V13 | Requires: lib-wrapper, socketlib
  *
+ * Neu in v1.8.3:
+ * - Skill-Werte werden jetzt direkt aus dem Dialog genommen (behebt Zielwert 0)
+ * - Skills-Liste wird im Dialog-Result gespeichert und wiederverwendet
+ * 
  * Neu in v1.8.2:
  * - "Handeln (Gesamt)" nutzt jetzt actionTotal statt nur Mod (verhindert Zielwert 0)
  * 
@@ -636,7 +640,7 @@ async function showAttackDialog(actor, weaponCfg, weaponName, currentAmmo) {
             ? Math.max(2, Math.min(10, parseInt(el.querySelector("#val2-bullets")?.value) || 3))
             : 1;
           if (!skillId) return null;
-          return { skillId, firemode, bullets };
+          return { skillId, firemode, bullets, skills };
         }
       },
       {
@@ -757,7 +761,8 @@ async function showGrenadeDialog(actor, grenadeCfg, grenadeName, quantity) {
         callback: (_e, _b, dialog) => {
           const skillId = dialog.element.querySelector("#val2-grenade-skill")?.value;
           if (!skillId) return null;
-          return { skillId };
+          // Skills-Liste mitgeben, damit wir den Wert später wiederfinden
+          return { skillId, skills };
         }
       },
       { label: "Abbrechen", action: "cancel", callback: () => null }
@@ -816,36 +821,24 @@ async function handleWeaponRoll(item) {
 
   if (!choice.skillId) return;
 
-  // Handeln-Werte mit Fallbacks auslesen
-  const actionMod = actor.skillSetData?.action?.mod ?? 0;
-  let actionTotal = actor.skillSetData?.action?.totalValue ?? 0;
+  // Skill-Wert aus der Dialog-Skills-Liste holen (nicht neu berechnen!)
+  const selectedSkill = choice.skills?.find(s => s.id === choice.skillId);
   
-  // Fallback: system.attributes oder Skills manuell summieren
-  if (actionTotal === 0) {
-    actionTotal = Number(actor.system?.attributes?.skillSets?.action?.value ?? 0);
-  }
-  if (actionTotal === 0) {
-    const actionSkills = actor.items.filter(i => 
-      i.type === "ability" && i.system?.skillSet === "action"
-    );
-    actionTotal = actionSkills.reduce((sum, s) => 
-      sum + Number(s.system?.total ?? s.system?.value ?? 0), 0
-    );
-  }
-
   let skillName, skillBase, skillTotal;
-  if (choice.skillId === "__action_base__") {
-    skillName = "Handeln (Gesamt)";
-    skillBase = actionTotal;
-    skillTotal = actionTotal; // Gesamt-Handeln-Wert
-    console.log(`${MODULE_ID} | Handeln (Gesamt): actionTotal=${actionTotal}, actionMod=${actionMod}`);
+  if (selectedSkill) {
+    // Skill aus Dialog gefunden - verwende diese Werte direkt
+    skillName = selectedSkill.name;
+    skillBase = selectedSkill.base;
+    skillTotal = selectedSkill.total;
+    console.log(`${MODULE_ID} | Skill aus Dialog: ${skillName}, base=${skillBase}, total=${skillTotal}`);
   } else {
+    // Fallback: Skill aus Actor-Daten holen (sollte nicht passieren)
+    ui.notifications.warn(`${MODULE_ID} | Skill nicht in Dialog-Liste gefunden, verwende Fallback.`);
+    const actionMod = actor.skillSetData?.action?.mod ?? 0;
     const skillItem = actor.items.get(choice.skillId);
     if (!skillItem) { ui.notifications.error(`${MODULE_ID} | Skill nicht gefunden.`); return; }
     skillName = skillItem.name;
     skillBase = Number(skillItem.system?.value ?? 0);
-    // HTBAH setzt system.total = value + actionMod automatisch
-    // Falls nicht vorhanden, berechnen wir es manuell
     skillTotal = Number(skillItem.system?.total ?? (skillBase + actionMod));
   }
   const base = skillTotal;
@@ -881,8 +874,8 @@ async function handleWeaponRoll(item) {
 
   const flavorParts = [
     `<b>${item.name}</b>`,
-    skillTotal !== skillBase && actionMod > 0
-      ? `${skillName} (${skillBase} + ${actionMod} = ${skillTotal})`
+    skillTotal !== skillBase
+      ? `${skillName} (${skillBase} + ${skillTotal - skillBase} = ${skillTotal})`
       : `${skillName} (${skillTotal})`,
     bullets > 1 ? `${bullets} Kugeln | Mod: ${modText}` : "",
     `Zielwert: <b>${target}</b>`,
@@ -1042,35 +1035,24 @@ async function handleGrenadeThrow(item) {
   const choice = await showGrenadeDialog(actor, grenadeCfg, item.name, qty);
   if (!choice || !choice.skillId) return;
 
-  // Handeln-Werte mit Fallbacks auslesen
-  const actionMod = actor.skillSetData?.action?.mod ?? 0;
-  let actionTotal = actor.skillSetData?.action?.totalValue ?? 0;
+  // Skill-Wert aus der Dialog-Skills-Liste holen (nicht neu berechnen!)
+  const selectedSkill = choice.skills?.find(s => s.id === choice.skillId);
   
-  // Fallback: system.attributes oder Skills manuell summieren
-  if (actionTotal === 0) {
-    actionTotal = Number(actor.system?.attributes?.skillSets?.action?.value ?? 0);
-  }
-  if (actionTotal === 0) {
-    const actionSkills = actor.items.filter(i => 
-      i.type === "ability" && i.system?.skillSet === "action"
-    );
-    actionTotal = actionSkills.reduce((sum, s) => 
-      sum + Number(s.system?.total ?? s.system?.value ?? 0), 0
-    );
-  }
-
   let skillName, skillBase, skillTotal;
-  if (choice.skillId === "__action_base__") {
-    skillName  = "Handeln (Gesamt)";
-    skillBase  = actionTotal;
-    skillTotal = actionTotal; // Gesamt-Handeln-Wert
-    console.log(`${MODULE_ID} | Granate - Handeln (Gesamt): actionTotal=${actionTotal}, actionMod=${actionMod}`);
+  if (selectedSkill) {
+    // Skill aus Dialog gefunden - verwende diese Werte direkt
+    skillName = selectedSkill.name;
+    skillBase = selectedSkill.base;
+    skillTotal = selectedSkill.total;
+    console.log(`${MODULE_ID} | Granate - Skill aus Dialog: ${skillName}, base=${skillBase}, total=${skillTotal}`);
   } else {
+    // Fallback: Skill aus Actor-Daten holen (sollte nicht passieren)
+    ui.notifications.warn(`${MODULE_ID} | Skill nicht in Dialog-Liste gefunden, verwende Fallback.`);
+    const actionMod = actor.skillSetData?.action?.mod ?? 0;
     const skillItem = actor.items.get(choice.skillId);
     if (!skillItem) { ui.notifications.error(`${MODULE_ID} | Skill nicht gefunden.`); return; }
-    skillName  = skillItem.name;
-    skillBase  = Number(skillItem.system?.value ?? 0);
-    // HTBAH setzt system.total = value + actionMod automatisch
+    skillName = skillItem.name;
+    skillBase = Number(skillItem.system?.value ?? 0);
     skillTotal = Number(skillItem.system?.total ?? (skillBase + actionMod));
   }
 
@@ -1092,8 +1074,8 @@ async function handleGrenadeThrow(item) {
   await throwRoll.toMessage({
     speaker:  ChatMessage.getSpeaker({ actor }),
     flavor:   [`<b>${item.name} werfen</b>`,
-               skillTotal !== skillBase && actionMod > 0
-                 ? `${skillName} (${skillBase} + ${actionMod} = ${skillTotal})`
+               skillTotal !== skillBase
+                 ? `${skillName} (${skillBase} + ${skillTotal - skillBase} = ${skillTotal})`
                  : `${skillName} (${skillTotal})`,
                isCrit ? `<span style="color:#ffd700;">🎯 PERFEKTER WURF!</span>` : ""].filter(Boolean).join(" | "),
     rollMode: game.settings.get("core", "rollMode")
