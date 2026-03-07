@@ -1,10 +1,15 @@
 /**
- * HTBAH VAL-2 Combat v1.8
+ * HTBAH VAL-2 Combat v1.8.1
  * Foundry V13 | Requires: lib-wrapper, socketlib
  *
+ * Neu in v1.8.1:
+ * - libWrapper auf OVERRIDE geändert (Granaten benötigen keine Targets mehr)
+ * - Rauch occlusion.mode auf 1 (FADE) korrigiert statt 2 (verhindert Fehler)
+ * - Brandgranaten werden jetzt auch nach 5s automatisch entfernt
+ * 
  * Neu in v1.8:
- * - Skill-Würfe addieren jetzt korrekt den Handeln-Allgemeinwert
- * - Rauchgranaten blockieren jetzt Sicht (occlusion mode 2)
+ * - Skill-Würfe nutzen system.total (enthält bereits Handeln-Mod)
+ * - Rauchgranaten blockieren Sicht (occlusion + roof)
  * - Chat zeigt Skill-Berechnung an (Skill + Handeln-Mod)
  * 
  * Neu in v1.7:
@@ -476,7 +481,7 @@ async function gmCreateSmokeTile({ templateId, duration, smokeTextureSrc }) {
   const tileX    = templateDoc.x - radiusPx;
   const tileY    = templateDoc.y - radiusPx;
 
-  // V13 TileData: Rauch blockiert Sicht durch occlusion.mode = 2 (ROOF/VISION)
+  // V13 TileData: Rauch mit Sichtblockierung
   const tileData = {
     x:         tileX,
     y:         tileY,
@@ -487,10 +492,10 @@ async function gmCreateSmokeTile({ templateId, duration, smokeTextureSrc }) {
     alpha:     0.9,                      // Dichter Rauch (höhere Deckkraft)
     texture:   { src: smokeTextureSrc },
     occlusion: {
-      mode:  2,                          // 2 = ROOF → blockiert Sicht komplett
-      alpha: 0.8,                        // Sicht-Blockierung Stärke
-      radius: null                       // Kein radialer Fade
+      mode:  1,                          // 1 = FADE → Sichtblockierung mit Überblendung
+      alpha: 0.95                        // Sehr hohe Blockierung (fast undurchsichtig)
     },
+    roof:      true,                     // Als Dach markieren für Sichtblockierung
     restrictions: {
       light: true,                       // blockiert Licht
       weather: true                      // blockiert Wetter
