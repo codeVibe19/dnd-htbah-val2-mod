@@ -150,7 +150,13 @@ function getCurrentAmmo(item) {
 function getActionSkills(actor) {
   // mod = Math.round(summe aller action-skills / 10) → wird von HTBAH auf system.total addiert
   const actionMod = actor.skillSetData?.action?.mod ?? 0;
-  const actionTotal = actor.skillSetData?.action?.totalValue ?? 0;
+  let actionTotal = actor.skillSetData?.action?.totalValue ?? 0;
+  
+  // Fallback: Wenn totalValue nicht verfügbar, berechne manuell oder nutze system.attributes
+  if (actionTotal === 0) {
+    // Versuche system.attributes.skillSets.action.value als Fallback
+    actionTotal = Number(actor.system?.attributes?.skillSets?.action?.value ?? 0);
+  }
 
   const skills = actor.items
     .filter(i =>
@@ -170,6 +176,11 @@ function getActionSkills(actor) {
       };
     })
     .sort((a, b) => a.name.localeCompare(b.name, "de"));
+
+  // Wenn immer noch 0, berechne Summe aller Skills manuell
+  if (actionTotal === 0 && skills.length > 0) {
+    actionTotal = skills.reduce((sum, s) => sum + s.total, 0);
+  }
 
   // Blanker Handeln-Eintrag (totalValue = alle Skills zusammen)
   if (actionTotal > 0) {
@@ -805,15 +816,29 @@ async function handleWeaponRoll(item) {
 
   if (!choice.skillId) return;
 
-  // Handeln-Mod auslesen
+  // Handeln-Werte mit Fallbacks auslesen
   const actionMod = actor.skillSetData?.action?.mod ?? 0;
-  const actionTotal = actor.skillSetData?.action?.totalValue ?? 0;
+  let actionTotal = actor.skillSetData?.action?.totalValue ?? 0;
+  
+  // Fallback: system.attributes oder Skills manuell summieren
+  if (actionTotal === 0) {
+    actionTotal = Number(actor.system?.attributes?.skillSets?.action?.value ?? 0);
+  }
+  if (actionTotal === 0) {
+    const actionSkills = actor.items.filter(i => 
+      i.type === "ability" && i.system?.skillSet === "action"
+    );
+    actionTotal = actionSkills.reduce((sum, s) => 
+      sum + Number(s.system?.total ?? s.system?.value ?? 0), 0
+    );
+  }
 
   let skillName, skillBase, skillTotal;
   if (choice.skillId === "__action_base__") {
     skillName = "Handeln (Gesamt)";
     skillBase = actionTotal;
     skillTotal = actionTotal; // Gesamt-Handeln-Wert
+    console.log(`${MODULE_ID} | Handeln (Gesamt): actionTotal=${actionTotal}, actionMod=${actionMod}`);
   } else {
     const skillItem = actor.items.get(choice.skillId);
     if (!skillItem) { ui.notifications.error(`${MODULE_ID} | Skill nicht gefunden.`); return; }
@@ -1017,15 +1042,29 @@ async function handleGrenadeThrow(item) {
   const choice = await showGrenadeDialog(actor, grenadeCfg, item.name, qty);
   if (!choice || !choice.skillId) return;
 
-  // Handeln-Mod auslesen
+  // Handeln-Werte mit Fallbacks auslesen
   const actionMod = actor.skillSetData?.action?.mod ?? 0;
-  const actionTotal = actor.skillSetData?.action?.totalValue ?? 0;
+  let actionTotal = actor.skillSetData?.action?.totalValue ?? 0;
+  
+  // Fallback: system.attributes oder Skills manuell summieren
+  if (actionTotal === 0) {
+    actionTotal = Number(actor.system?.attributes?.skillSets?.action?.value ?? 0);
+  }
+  if (actionTotal === 0) {
+    const actionSkills = actor.items.filter(i => 
+      i.type === "ability" && i.system?.skillSet === "action"
+    );
+    actionTotal = actionSkills.reduce((sum, s) => 
+      sum + Number(s.system?.total ?? s.system?.value ?? 0), 0
+    );
+  }
 
   let skillName, skillBase, skillTotal;
   if (choice.skillId === "__action_base__") {
     skillName  = "Handeln (Gesamt)";
     skillBase  = actionTotal;
     skillTotal = actionTotal; // Gesamt-Handeln-Wert
+    console.log(`${MODULE_ID} | Granate - Handeln (Gesamt): actionTotal=${actionTotal}, actionMod=${actionMod}`);
   } else {
     const skillItem = actor.items.get(choice.skillId);
     if (!skillItem) { ui.notifications.error(`${MODULE_ID} | Skill nicht gefunden.`); return; }
