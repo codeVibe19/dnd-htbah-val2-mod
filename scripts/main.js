@@ -797,23 +797,24 @@ async function handleWeaponRoll(item) {
 
   if (!choice.skillId) return;
 
-  // Handeln-Mod auslesen (wird auf alle Action-Skills addiert)
+  // Handeln-Mod auslesen
   const actionMod = actor.skillSetData?.action?.mod ?? 0;
 
-  let skillName, skillBase, skillValue;
+  let skillName, skillBase, skillTotal;
   if (choice.skillId === "__action_base__") {
     skillName = "Handeln (Basis)";
     skillBase = Number(actor.system?.attributes?.skillSets?.action?.value ?? 0);
-    skillValue = skillBase; // Nur Basis-Wert, kein Skill-Item
+    skillTotal = skillBase; // Nur Basis-Wert, kein Skill-Item
   } else {
     const skillItem = actor.items.get(choice.skillId);
     if (!skillItem) { ui.notifications.error(`${MODULE_ID} | Skill nicht gefunden.`); return; }
     skillName = skillItem.name;
     skillBase = Number(skillItem.system?.value ?? 0);
-    // HTBAH: Würfelwert = Skill-Wert + Allgemeinwert (Handeln-Mod)
-    skillValue = skillBase + actionMod;
+    // HTBAH setzt system.total = value + actionMod automatisch
+    // Falls nicht vorhanden, berechnen wir es manuell
+    skillTotal = Number(skillItem.system?.total ?? (skillBase + actionMod));
   }
-  const base = skillValue;
+  const base = skillTotal;
   // FIX v1.4: Bullets auf verfügbare Munition clampen
   let bullets = choice.bullets;
   if (currentAmmo !== null && choice.firemode === "auto") {
@@ -846,9 +847,9 @@ async function handleWeaponRoll(item) {
 
   const flavorParts = [
     `<b>${item.name}</b>`,
-    actionMod > 0 && choice.skillId !== "__action_base__"
-      ? `${skillName} (${skillBase} + ${actionMod} Handeln = ${base})`
-      : `${skillName} (${base})`,
+    skillTotal !== skillBase && actionMod > 0
+      ? `${skillName} (${skillBase} + ${actionMod} = ${skillTotal})`
+      : `${skillName} (${skillTotal})`,
     bullets > 1 ? `${bullets} Kugeln | Mod: ${modText}` : "",
     `Zielwert: <b>${target}</b>`,
     isCrit ? `<span style="color:#ffd700; font-weight:bold;">🎯 KRITISCH!</span>` : ""
@@ -1007,21 +1008,21 @@ async function handleGrenadeThrow(item) {
   const choice = await showGrenadeDialog(actor, grenadeCfg, item.name, qty);
   if (!choice || !choice.skillId) return;
 
-  // Handeln-Mod auslesen (wird auf alle Action-Skills addiert)
+  // Handeln-Mod auslesen
   const actionMod = actor.skillSetData?.action?.mod ?? 0;
 
   let skillName, skillBase, skillTotal;
   if (choice.skillId === "__action_base__") {
     skillName  = "Handeln (Basis)";
     skillBase  = Number(actor.system?.attributes?.skillSets?.action?.value ?? 0);
-    skillTotal = skillBase; // Nur Basis-Wert, kein Skill-Item
+    skillTotal = skillBase; // Nur Basis-Wert
   } else {
     const skillItem = actor.items.get(choice.skillId);
     if (!skillItem) { ui.notifications.error(`${MODULE_ID} | Skill nicht gefunden.`); return; }
     skillName  = skillItem.name;
     skillBase  = Number(skillItem.system?.value ?? 0);
-    // HTBAH: Würfelwert = Skill-Wert + Allgemeinwert (Handeln-Mod)
-    skillTotal = skillBase + actionMod;
+    // HTBAH setzt system.total = value + actionMod automatisch
+    skillTotal = Number(skillItem.system?.total ?? (skillBase + actionMod));
   }
 
   // ── Schritt 2: Wurf-Check ──────────────────────────────────────────
@@ -1042,7 +1043,9 @@ async function handleGrenadeThrow(item) {
   await throwRoll.toMessage({
     speaker:  ChatMessage.getSpeaker({ actor }),
     flavor:   [`<b>${item.name} werfen</b>`,
-               actionMod > 0 ? `${skillName} (${skillBase} + ${actionMod} Handeln = ${skillTotal})` : `${skillName} (${skillTotal})`,
+               skillTotal !== skillBase && actionMod > 0
+                 ? `${skillName} (${skillBase} + ${actionMod} = ${skillTotal})`
+                 : `${skillName} (${skillTotal})`,
                isCrit ? `<span style="color:#ffd700;">🎯 PERFEKTER WURF!</span>` : ""].filter(Boolean).join(" | "),
     rollMode: game.settings.get("core", "rollMode")
   });
@@ -1162,8 +1165,9 @@ async function handleGrenadeThrow(item) {
 
   await socket.executeAsGM("consumeItem", { actorId: actor.id, itemId: item.id });
 
-  // Blend + Splitter: Template nach 5 Sekunden löschen
-  if (grenadeCfg.effect === "blind" || grenadeCfg.effect === null) {
+  // Blend, Splitter, Brand: Template nach 5 Sekunden löschen
+  // Rauch bleibt liegen (wird durch Combat-Hook abgeräumt)
+  if (grenadeCfg.effect === "blind" || grenadeCfg.effect === null || grenadeCfg.effect === "burn") {
     setTimeout(async () => {
       await canvas.scene.deleteEmbeddedDocuments("MeasuredTemplate", [templateId]);
     }, 5000);
@@ -1618,12 +1622,14 @@ Hooks.once("setup", () => {
     MODULE_ID,
     "game.howtobeahero.HowToBeAHeroItem.prototype.roll",
     async function(wrapped, ...args) {
+      // VAL-2 Items: komplett eigene Logik (kein Target benötigt)
       if (getWeaponConfig(this))  { await handleWeaponRoll(this);  return; }
       if (getGrenadeConfig(this)) { await handleGrenadeThrow(this); return; }
       if (getHealpackValue(this)) { await handleHealpackRoll(this); return; }
+      // Alle anderen Items: Standard HTBAH-Verhalten
       return wrapped(...args);
     },
-    "MIXED"
+    "OVERRIDE"
   );
 
   console.log(`${MODULE_ID} | libWrapper registriert.`);
