@@ -473,43 +473,6 @@ async function gmCreateSmokeTile({ templateId, duration, smokeTextureSrc }) {
   const currentRound   = Number(game.combat?.round ?? 0);
   const expiresOnRound = currentRound + Number(duration || 3);
 
-  // Radius in Pixeln — templateDoc.distance ist in Feldern (V13)
-  const gridSize = canvas.scene.grid.size ?? 100;
-  const radiusPx = templateDoc.distance * gridSize;
-  const diameter = radiusPx * 2;
-  const tileX    = templateDoc.x - radiusPx;
-  const tileY    = templateDoc.y - radiusPx;
-
-  // V13 TileData: kein overhead/roof — elevation > 0 = Overhead, restrictions für Sichtblock
-  const tileData = {
-    x:         tileX,
-    y:         tileY,
-    width:     diameter,
-    height:    diameter,
-    elevation: 1,                        // > 0 → Overhead-Layer
-    sort:      9999,                     // Über allem anderen
-    alpha:     0.85,
-    texture:   { src: smokeTextureSrc },
-    occlusion: {
-      mode:  0,                          // 0 = NONE → kein Fade, immer sichtbar
-      alpha: 1
-    },
-    restrictions: {
-      light: true,                       // blockiert Licht
-      weather: true                      // blockiert Wetter
-    },
-    flags: {
-      [MODULE_ID]: {
-        isSmokeTile:     true,
-        smokeTemplateId: templateId,
-        smokeUntilRound: expiresOnRound
-      }
-    }
-  };
-
-  const created = await canvas.scene.createEmbeddedDocuments("Tile", [tileData]);
-  const tileId  = created[0]?.id ?? null;
-
   // Dunkelheitsquelle + Region via Limits — lokale Dunkelheit im Rauchbereich
   const limitsAvailable = game.modules.get("limits")?.active ?? false;
   let regionId = null;
@@ -572,18 +535,18 @@ async function gmCreateSmokeTile({ templateId, duration, smokeTextureSrc }) {
     regionId = regionCreated[0]?.id ?? null;
   }
 
+  // IDs für Cleanup im Template speichern
   await templateDoc.setFlag(MODULE_ID, "isSmokeTemplate", true);
   await templateDoc.setFlag(MODULE_ID, "smokeUntilRound", expiresOnRound);
-  await templateDoc.setFlag(MODULE_ID, "smokeTileId",     tileId);
   await templateDoc.setFlag(MODULE_ID, "smokeLightId",    lightId);
   await templateDoc.setFlag(MODULE_ID, "smokeRegionId",   regionId);
 
-  // Template verstecken (Rauch wird durch Tile dargestellt)
+  // Template verstecken (Ausrufezeichen nicht sichtbar)
   await templateDoc.update({ hidden: true });
 
   canvas.perception.update({ refreshVision: true, refreshLighting: true });
 
-  return { success: true, templateId, tileId, lightId, regionId, expiresOnRound };
+  return { success: true, templateId, lightId, regionId, expiresOnRound };
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1308,9 +1271,6 @@ async function cleanupExpiredSmokeTemplates() {
   if (!expiredTemplates.length) return;
 
   const templateIds = expiredTemplates.map(t => t.id);
-  const tileIds     = expiredTemplates
-    .map(t => t.getFlag(MODULE_ID, "smokeTileId"))
-    .filter(Boolean);
   const lightIds    = expiredTemplates
     .map(t => t.getFlag(MODULE_ID, "smokeLightId"))
     .filter(Boolean);
@@ -1318,7 +1278,6 @@ async function cleanupExpiredSmokeTemplates() {
     .map(t => t.getFlag(MODULE_ID, "smokeRegionId"))
     .filter(Boolean);
 
-  if (tileIds.length)     await canvas.scene.deleteEmbeddedDocuments("Tile",             tileIds);
   if (lightIds.length)    await canvas.scene.deleteEmbeddedDocuments("AmbientLight",     lightIds);
   if (regionIds.length)   await canvas.scene.deleteEmbeddedDocuments("Region",           regionIds);
   if (templateIds.length) await canvas.scene.deleteEmbeddedDocuments("MeasuredTemplate", templateIds);
