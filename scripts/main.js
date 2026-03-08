@@ -578,6 +578,9 @@ async function gmCreateSmokeTile({ templateId, duration, smokeTextureSrc }) {
   await templateDoc.setFlag(MODULE_ID, "smokeLightId",    lightId);
   await templateDoc.setFlag(MODULE_ID, "smokeRegionId",   regionId);
 
+  // Template verstecken (Rauch wird durch Tile dargestellt)
+  await templateDoc.update({ hidden: true });
+
   canvas.perception.update({ refreshVision: true, refreshLighting: true });
 
   return { success: true, templateId, tileId, lightId, regionId, expiresOnRound };
@@ -1239,9 +1242,8 @@ async function handleGrenadeThrow(item) {
 
   await socket.executeAsGM("consumeItem", { actorId: actor.id, itemId: item.id });
 
-  // Blend, Splitter, Brand: Template nach 5 Sekunden löschen
-  // Rauch bleibt liegen (wird durch Combat-Hook abgeräumt)
-  if (grenadeCfg.effect === "blind" || grenadeCfg.effect === null || grenadeCfg.effect === "burn") {
+  // Blend + Splitter: Template nach 5 Sekunden löschen
+  if (grenadeCfg.effect === "blind" || grenadeCfg.effect === null) {
     setTimeout(async () => {
       await canvas.scene.deleteEmbeddedDocuments("MeasuredTemplate", [templateId]);
     }, 5000);
