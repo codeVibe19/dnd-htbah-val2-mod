@@ -1,6 +1,11 @@
 /**
- * HTBAH VAL-2 Combat v1.8.6
+ * HTBAH VAL-2 Combat v1.9
  * Foundry V13 | Requires: lib-wrapper, socketlib
+ * 
+ * Neu in v1.9:
+ * - Rauchgranaten: Limits-Modul Integration für lokale Dunkelheit
+ * - Rauchgranaten: AmbientLight + Region für bessere Sichtblockierung
+ * - Rauchgranaten: Tile occlusion mode 0 (NONE) für konsistente Sichtbarkeit
  * 
  * Neu in v1.8:
  * - Skill-Würfe nutzen system.total (enthält bereits Handeln-Mod)
@@ -475,7 +480,7 @@ async function gmCreateSmokeTile({ templateId, duration, smokeTextureSrc }) {
   const tileX    = templateDoc.x - radiusPx;
   const tileY    = templateDoc.y - radiusPx;
 
-  // V13 TileData: Rauch mit Sichtblockierung
+  // V13 TileData: kein overhead/roof — elevation > 0 = Overhead, restrictions für Sichtblock
   const tileData = {
     x:         tileX,
     y:         tileY,
@@ -483,13 +488,12 @@ async function gmCreateSmokeTile({ templateId, duration, smokeTextureSrc }) {
     height:    diameter,
     elevation: 1,                        // > 0 → Overhead-Layer
     sort:      9999,                     // Über allem anderen
-    alpha:     0.9,                      // Dichter Rauch (höhere Deckkraft)
+    alpha:     0.85,
     texture:   { src: smokeTextureSrc },
     occlusion: {
-      mode:  1,                          // 1 = FADE → Sichtblockierung mit Überblendung
-      alpha: 0.95                        // Sehr hohe Blockierung (fast undurchsichtig)
+      mode:  0,                          // 0 = NONE → kein Fade, immer sichtbar
+      alpha: 1
     },
-    roof:      true,                     // Als Dach markieren für Sichtblockierung
     restrictions: {
       light: true,                       // blockiert Licht
       weather: true                      // blockiert Wetter
@@ -506,14 +510,77 @@ async function gmCreateSmokeTile({ templateId, duration, smokeTextureSrc }) {
   const created = await canvas.scene.createEmbeddedDocuments("Tile", [tileData]);
   const tileId  = created[0]?.id ?? null;
 
+  // Dunkelheitsquelle + Region via Limits — lokale Dunkelheit im Rauchbereich
+  const limitsAvailable = game.modules.get("limits")?.active ?? false;
+  let regionId = null;
+  let lightId  = null;
+
+  // AmbientLight-Dunkelheitsquelle — immer erstellen (Limits begrenzt sie lokal)
+  const lightData = {
+    x: templateDoc.x,
+    y: templateDoc.y,
+    config: {
+      negative:   true,
+      luminosity: -1,
+      bright:     templateDoc.distance,
+      dim:        0,
+      priority:   0,
+      color:      "#000000",
+      alpha:      0
+    },
+    flags: { [MODULE_ID]: { isSmokeLight: true, smokeTemplateId: templateId } }
+  };
+  const lightCreated = await canvas.scene.createEmbeddedDocuments("AmbientLight", [lightData]);
+  lightId = lightCreated[0]?.id ?? null;
+
+  if (limitsAvailable) {
+    // Region als Limits-Boundary — beschränkt die Dunkelheitsquelle auf den Kreisbereich
+    const gridPx      = canvas.scene.grid.size ?? 100;
+    const gridDist    = canvas.scene.grid.distance ?? 5;
+    const radiusPxReg = (templateDoc.distance / gridDist) * gridPx;
+
+    const regionData = {
+      name:       "Rauch",
+      color:      "#888888",
+      visibility: 0,
+      shapes: [{
+        type:   "circle",
+        x:      templateDoc.x,
+        y:      templateDoc.y,
+        radius: radiusPxReg
+      }],
+      behaviors: [{
+        type:     "limits.limitRange",
+        disabled: false,
+        system: {
+          darkness: true,
+          sight:    {},
+          light:    false,
+          sound:    false
+        }
+      }],
+      flags: {
+        [MODULE_ID]: {
+          isSmokeRegion:   true,
+          smokeTemplateId: templateId,
+          smokeUntilRound: expiresOnRound
+        }
+      }
+    };
+
+    const regionCreated = await canvas.scene.createEmbeddedDocuments("Region", [regionData]);
+    regionId = regionCreated[0]?.id ?? null;
+  }
+
   await templateDoc.setFlag(MODULE_ID, "isSmokeTemplate", true);
   await templateDoc.setFlag(MODULE_ID, "smokeUntilRound", expiresOnRound);
   await templateDoc.setFlag(MODULE_ID, "smokeTileId",     tileId);
+  await templateDoc.setFlag(MODULE_ID, "smokeLightId",    lightId);
+  await templateDoc.setFlag(MODULE_ID, "smokeRegionId",   regionId);
 
-  // Sicht neu berechnen
   canvas.perception.update({ refreshVision: true, refreshLighting: true });
 
-  return { success: true, templateId, tileId, expiresOnRound };
+  return { success: true, templateId, tileId, lightId, regionId, expiresOnRound };
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1242,8 +1309,16 @@ async function cleanupExpiredSmokeTemplates() {
   const tileIds     = expiredTemplates
     .map(t => t.getFlag(MODULE_ID, "smokeTileId"))
     .filter(Boolean);
+  const lightIds    = expiredTemplates
+    .map(t => t.getFlag(MODULE_ID, "smokeLightId"))
+    .filter(Boolean);
+  const regionIds   = expiredTemplates
+    .map(t => t.getFlag(MODULE_ID, "smokeRegionId"))
+    .filter(Boolean);
 
   if (tileIds.length)     await canvas.scene.deleteEmbeddedDocuments("Tile",             tileIds);
+  if (lightIds.length)    await canvas.scene.deleteEmbeddedDocuments("AmbientLight",     lightIds);
+  if (regionIds.length)   await canvas.scene.deleteEmbeddedDocuments("Region",           regionIds);
   if (templateIds.length) await canvas.scene.deleteEmbeddedDocuments("MeasuredTemplate", templateIds);
 
   await ChatMessage.create({
