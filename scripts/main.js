@@ -2,11 +2,6 @@
  * HTBAH VAL-2 Combat v1.9
  * Foundry V13 | Requires: lib-wrapper, socketlib
  * 
- * Neu in v1.9:
- * - Rauchgranaten: Limits-Modul Integration für lokale Dunkelheit
- * - Rauchgranaten: AmbientLight + Region für bessere Sichtblockierung
- * - Rauchgranaten: Tile occlusion mode 0 (NONE) für konsistente Sichtbarkeit
- * 
  * Neu in v1.8:
  * - Skill-Würfe nutzen system.total (enthält bereits Handeln-Mod)
  * - Rauchgranaten blockieren Sicht (occlusion + roof)
