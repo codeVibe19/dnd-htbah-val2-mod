@@ -1668,6 +1668,13 @@ Hooks.once("setup", () => {
     ui.notifications.error("htbah-val2-combat: lib-wrapper wird benötigt!");
     return;
   }
+  if (!game.howtobeahero?.HowToBeAHeroItem) {
+    console.error(`${MODULE_ID} | HTBAH nicht geladen.`);
+    return;
+  }
+
+  // Original-Funktion speichern BEVOR wir registrieren
+  const originalRoll = game.howtobeahero.HowToBeAHeroItem.prototype.roll;
 
   // CONFIG.Item.documentClass.prototype.roll — libWrapper löst diesen Pfad
   // zur Laufzeit auf, nicht beim Register. Daher funktioniert das auch wenn
@@ -1679,10 +1686,15 @@ Hooks.once("setup", () => {
       if (getWeaponConfig(this))  { await handleWeaponRoll(this);  return; }
       if (getGrenadeConfig(this)) { await handleGrenadeThrow(this); return; }
       if (getHealpackValue(this)) { await handleHealpackRoll(this); return; }
-      // Kein Match — normaler HTBAH Skill-Würfelwurf
-      return wrapped(...args);
+      // Alle anderen Items: Standard HTBAH-Verhalten
+      // Falls wrapped nicht funktioniert, nutze gespeicherte Original-Funktion
+      if (typeof wrapped === "function") {
+        return wrapped.call(this, ...args);
+      } else if (typeof originalRoll === "function") {
+        return originalRoll.call(this, ...args);
+      }
     },
-    "MIXED"
+    "WRAPPER"
   );
 
   console.log(`${MODULE_ID} | libWrapper registriert.`);
