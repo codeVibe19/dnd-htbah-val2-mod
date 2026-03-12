@@ -147,6 +147,7 @@ function getCurrentAmmo(item) {
 function getActionSkills(actor) {
   // mod = Math.round(summe aller action-skills / 10) → wird von HTBAH auf system.total addiert
   const actionMod = actor.skillSetData?.action?.mod ?? 0;
+  const actionTotal = actor.skillSetData?.action?.totalValue ?? 0;
 
   const skills = actor.items
     .filter(i =>
@@ -167,7 +168,7 @@ function getActionSkills(actor) {
     })
     .sort((a, b) => a.name.localeCompare(b.name, "de"));
 
-  // Dies ist der Fallback wenn man keinen passenden Skill hat
+  // Blanker Handeln-Eintrag (nur mod, kein Skill-Item)
   if (actionMod > 0) {
     skills.unshift({
       id:    "__action_base__",
@@ -347,6 +348,7 @@ async function gmCreateGrenadeTemplate({ x, y, templateType, distance, fillColor
     y: finalY,
     distance: Number(distance),
     fillColor: fillColor || "#ff6600",
+    hidden: true,
     flags: {
       [MODULE_ID]: {
         isGrenadeTemplate: true
@@ -473,6 +475,43 @@ async function gmCreateSmokeTile({ templateId, duration, smokeTextureSrc }) {
   const currentRound   = Number(game.combat?.round ?? 0);
   const expiresOnRound = currentRound + Number(duration || 3);
 
+  // Radius in Pixeln — templateDoc.distance ist in Feldern (V13)
+  const gridSize = canvas.scene.grid.size ?? 100;
+  const radiusPx = templateDoc.distance * gridSize;
+  const diameter = radiusPx * 2;
+  const tileX    = templateDoc.x - radiusPx;
+  const tileY    = templateDoc.y - radiusPx;
+
+  // V13 TileData: kein overhead/roof — elevation > 0 = Overhead, restrictions für Sichtblock
+  const tileData = {
+    x:         tileX,
+    y:         tileY,
+    width:     diameter,
+    height:    diameter,
+    elevation: 1,                        // > 0 → Overhead-Layer
+    sort:      9999,                     // Über allem anderen
+    alpha:     0.85,
+    texture:   { src: smokeTextureSrc },
+    occlusion: {
+      mode:  0,                          // 0 = NONE → kein Fade, immer sichtbar
+      alpha: 1
+    },
+    restrictions: {
+      light: true,                       // blockiert Licht
+      weather: true                      // blockiert Wetter
+    },
+    flags: {
+      [MODULE_ID]: {
+        isSmokeTile:     true,
+        smokeTemplateId: templateId,
+        smokeUntilRound: expiresOnRound
+      }
+    }
+  };
+
+  const created = await canvas.scene.createEmbeddedDocuments("Tile", [tileData]);
+  const tileId  = created[0]?.id ?? null;
+
   // Dunkelheitsquelle + Region via Limits — lokale Dunkelheit im Rauchbereich
   const limitsAvailable = game.modules.get("limits")?.active ?? false;
   let regionId = null;
@@ -535,18 +574,15 @@ async function gmCreateSmokeTile({ templateId, duration, smokeTextureSrc }) {
     regionId = regionCreated[0]?.id ?? null;
   }
 
-  // IDs für Cleanup im Template speichern
   await templateDoc.setFlag(MODULE_ID, "isSmokeTemplate", true);
   await templateDoc.setFlag(MODULE_ID, "smokeUntilRound", expiresOnRound);
+  await templateDoc.setFlag(MODULE_ID, "smokeTileId",     tileId);
   await templateDoc.setFlag(MODULE_ID, "smokeLightId",    lightId);
   await templateDoc.setFlag(MODULE_ID, "smokeRegionId",   regionId);
 
-  // Template verstecken (Ausrufezeichen nicht sichtbar)
-  await templateDoc.update({ hidden: true });
-
   canvas.perception.update({ refreshVision: true, refreshLighting: true });
 
-  return { success: true, templateId, lightId, regionId, expiresOnRound };
+  return { success: true, templateId, tileId, lightId, regionId, expiresOnRound };
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -649,7 +685,7 @@ async function showAttackDialog(actor, weaponCfg, weaponName, currentAmmo) {
             ? Math.max(2, Math.min(10, parseInt(el.querySelector("#val2-bullets")?.value) || 3))
             : 1;
           if (!skillId) return null;
-          return { skillId, firemode, bullets, skills };
+          return { skillId, firemode, bullets };
         }
       },
       {
@@ -770,8 +806,7 @@ async function showGrenadeDialog(actor, grenadeCfg, grenadeName, quantity) {
         callback: (_e, _b, dialog) => {
           const skillId = dialog.element.querySelector("#val2-grenade-skill")?.value;
           if (!skillId) return null;
-          // Skills-Liste mitgeben, damit wir den Wert später wiederfinden
-          return { skillId, skills };
+          return { skillId };
         }
       },
       { label: "Abbrechen", action: "cancel", callback: () => null }
@@ -830,27 +865,16 @@ async function handleWeaponRoll(item) {
 
   if (!choice.skillId) return;
 
-  // Skill-Wert aus der Dialog-Skills-Liste holen (nicht neu berechnen!)
-  const selectedSkill = choice.skills?.find(s => s.id === choice.skillId);
-  
-  let skillName, skillBase, skillTotal;
-  if (selectedSkill) {
-    // Skill aus Dialog gefunden - verwende diese Werte direkt
-    skillName = selectedSkill.name;
-    skillBase = selectedSkill.base;
-    skillTotal = selectedSkill.total;
-    console.log(`${MODULE_ID} | Skill aus Dialog: ${skillName}, base=${skillBase}, total=${skillTotal}`);
+  let skillName, base;
+  if (choice.skillId === "__action_base__") {
+    skillName = "Handeln (Basis)";
+    base      = Number(actor.system?.attributes?.skillSets?.action?.value ?? 0);
   } else {
-    // Fallback: Skill aus Actor-Daten holen (sollte nicht passieren)
-    ui.notifications.warn(`${MODULE_ID} | Skill nicht in Dialog-Liste gefunden, verwende Fallback.`);
-    const actionMod = actor.skillSetData?.action?.mod ?? 0;
     const skillItem = actor.items.get(choice.skillId);
     if (!skillItem) { ui.notifications.error(`${MODULE_ID} | Skill nicht gefunden.`); return; }
     skillName = skillItem.name;
-    skillBase = Number(skillItem.system?.value ?? 0);
-    skillTotal = Number(skillItem.system?.total ?? (skillBase + actionMod));
+    base      = Number(skillItem.system?.total ?? skillItem.system?.value ?? 0);
   }
-  const base = skillTotal;
   // FIX v1.4: Bullets auf verfügbare Munition clampen
   let bullets = choice.bullets;
   if (currentAmmo !== null && choice.firemode === "auto") {
@@ -883,9 +907,7 @@ async function handleWeaponRoll(item) {
 
   const flavorParts = [
     `<b>${item.name}</b>`,
-    skillTotal !== skillBase
-      ? `${skillName} (${skillBase} + ${skillTotal - skillBase} = ${skillTotal})`
-      : `${skillName} (${skillTotal})`,
+    `${skillName} (${base})`,
     bullets > 1 ? `${bullets} Kugeln | Mod: ${modText}` : "",
     `Zielwert: <b>${target}</b>`,
     isCrit ? `<span style="color:#ffd700; font-weight:bold;">🎯 KRITISCH!</span>` : ""
@@ -1044,32 +1066,22 @@ async function handleGrenadeThrow(item) {
   const choice = await showGrenadeDialog(actor, grenadeCfg, item.name, qty);
   if (!choice || !choice.skillId) return;
 
-  // Skill-Wert aus der Dialog-Skills-Liste holen (nicht neu berechnen!)
-  const selectedSkill = choice.skills?.find(s => s.id === choice.skillId);
-  
-  let skillName, skillBase, skillTotal;
-  if (selectedSkill) {
-    // Skill aus Dialog gefunden - verwende diese Werte direkt
-    skillName = selectedSkill.name;
-    skillBase = selectedSkill.base;
-    skillTotal = selectedSkill.total;
-    console.log(`${MODULE_ID} | Granate - Skill aus Dialog: ${skillName}, base=${skillBase}, total=${skillTotal}`);
+  let skillName, skillValue;
+  if (choice.skillId === "__action_base__") {
+    skillName  = "Handeln (Basis)";
+    skillValue = Number(actor.system?.attributes?.skillSets?.action?.value ?? 0);
   } else {
-    // Fallback: Skill aus Actor-Daten holen (sollte nicht passieren)
-    ui.notifications.warn(`${MODULE_ID} | Skill nicht in Dialog-Liste gefunden, verwende Fallback.`);
-    const actionMod = actor.skillSetData?.action?.mod ?? 0;
     const skillItem = actor.items.get(choice.skillId);
     if (!skillItem) { ui.notifications.error(`${MODULE_ID} | Skill nicht gefunden.`); return; }
-    skillName = skillItem.name;
-    skillBase = Number(skillItem.system?.value ?? 0);
-    skillTotal = Number(skillItem.system?.total ?? (skillBase + actionMod));
+    skillName  = skillItem.name;
+    // system.total = value + skillset-mod (z.B. 90 + 9 = 99)
+    skillValue = Number(skillItem.system?.total ?? skillItem.system?.value ?? 0);
   }
 
   // ── Schritt 2: Wurf-Check ──────────────────────────────────────────
-
   const throwRoll = await new Roll("1d100").evaluate();
   const rolled    = throwRoll.total;
-  const isSuccess = rolled <= skillTotal;
+  const isSuccess = rolled <= skillValue;
   const isCrit    = rolled <= 10;
 
   let scatterDistance = 0;
@@ -1082,10 +1094,7 @@ async function handleGrenadeThrow(item) {
 
   await throwRoll.toMessage({
     speaker:  ChatMessage.getSpeaker({ actor }),
-    flavor:   [`<b>${item.name} werfen</b>`,
-               skillTotal !== skillBase
-                 ? `${skillName} (${skillBase} + ${skillTotal - skillBase} = ${skillTotal})`
-                 : `${skillName} (${skillTotal})`,
+    flavor:   [`<b>${item.name} werfen</b>`, `${skillName} (${skillValue})`,
                isCrit ? `<span style="color:#ffd700;">🎯 PERFEKTER WURF!</span>` : ""].filter(Boolean).join(" | "),
     rollMode: game.settings.get("core", "rollMode")
   });
@@ -1271,6 +1280,9 @@ async function cleanupExpiredSmokeTemplates() {
   if (!expiredTemplates.length) return;
 
   const templateIds = expiredTemplates.map(t => t.id);
+  const tileIds     = expiredTemplates
+    .map(t => t.getFlag(MODULE_ID, "smokeTileId"))
+    .filter(Boolean);
   const lightIds    = expiredTemplates
     .map(t => t.getFlag(MODULE_ID, "smokeLightId"))
     .filter(Boolean);
@@ -1278,6 +1290,7 @@ async function cleanupExpiredSmokeTemplates() {
     .map(t => t.getFlag(MODULE_ID, "smokeRegionId"))
     .filter(Boolean);
 
+  if (tileIds.length)     await canvas.scene.deleteEmbeddedDocuments("Tile",             tileIds);
   if (lightIds.length)    await canvas.scene.deleteEmbeddedDocuments("AmbientLight",     lightIds);
   if (regionIds.length)   await canvas.scene.deleteEmbeddedDocuments("Region",           regionIds);
   if (templateIds.length) await canvas.scene.deleteEmbeddedDocuments("MeasuredTemplate", templateIds);
@@ -1650,35 +1663,36 @@ Hooks.on("renderHowToBeAHeroItemSheet", (sheet, _element, _context, _options) =>
 // ═══════════════════════════════════════════════════════════════
 // LIBWRAPPER – nur noch item.roll()
 // ═══════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════
+// LIBWRAPPER – item.roll() abfangen
+// ═══════════════════════════════════════════════════════════════
 
+// setup kommt nach init — HTBAH hat CONFIG.Item.documentClass bereits gesetzt
 Hooks.once("setup", () => {
   if (!game.modules.get("lib-wrapper")?.active) {
     ui.notifications.error("htbah-val2-combat: lib-wrapper wird benötigt!");
     return;
   }
-  if (!game.howtobeahero?.HowToBeAHeroItem) {
-    console.error(`${MODULE_ID} | HTBAH nicht geladen.`);
-    return;
-  }
 
+  // CONFIG.Item.documentClass.prototype.roll — libWrapper löst diesen Pfad
+  // zur Laufzeit auf, nicht beim Register. Daher funktioniert das auch wenn
+  // HTBAH die Klasse erst im init-Hook gesetzt hat.
   libWrapper.register(
     MODULE_ID,
-    "game.howtobeahero.HowToBeAHeroItem.prototype.roll",
+    "CONFIG.Item.documentClass.prototype.roll",
     async function(wrapped, ...args) {
-      // VAL-2 Items: komplett eigene Logik (kein Target benötigt)
       if (getWeaponConfig(this))  { await handleWeaponRoll(this);  return; }
       if (getGrenadeConfig(this)) { await handleGrenadeThrow(this); return; }
       if (getHealpackValue(this)) { await handleHealpackRoll(this); return; }
-      // Alle anderen Items: Standard HTBAH-Verhalten
+      // Kein Match — normaler HTBAH Skill-Würfelwurf
       return wrapped(...args);
     },
-    "OVERRIDE"
+    "MIXED"
   );
 
   console.log(`${MODULE_ID} | libWrapper registriert.`);
 });
 
-// ═══════════════════════════════════════════════════════════════
 // MUNITIONSLEISTE (adaptiert von Party Resources)
 // ═══════════════════════════════════════════════════════════════
 
