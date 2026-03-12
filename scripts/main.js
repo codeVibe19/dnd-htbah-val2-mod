@@ -1658,7 +1658,6 @@ Hooks.on("renderHowToBeAHeroItemSheet", (sheet, _element, _context, _options) =>
 // ═══════════════════════════════════════════════════════════════
 // LIBWRAPPER – nur noch item.roll()
 // ═══════════════════════════════════════════════════════════════
-// ═══════════════════════════════════════════════════════════════
 // LIBWRAPPER – item.roll() abfangen
 // ═══════════════════════════════════════════════════════════════
 
@@ -1675,14 +1674,13 @@ Hooks.once("setup", () => {
 
   // Original-Funktion speichern BEVOR wir registrieren
   const originalRoll = game.howtobeahero.HowToBeAHeroItem.prototype.roll;
+  console.log(`${MODULE_ID} | originalRoll gespeichert:`, typeof originalRoll);
 
-  // CONFIG.Item.documentClass.prototype.roll — libWrapper löst diesen Pfad
-  // zur Laufzeit auf, nicht beim Register. Daher funktioniert das auch wenn
-  // HTBAH die Klasse erst im init-Hook gesetzt hat.
   libWrapper.register(
     MODULE_ID,
-    "CONFIG.Item.documentClass.prototype.roll",
+    "game.howtobeahero.HowToBeAHeroItem.prototype.roll",
     async function(wrapped, ...args) {
+      console.log(`${MODULE_ID} | roll() aufgerufen - wrapped type:`, typeof wrapped, "originalRoll type:", typeof originalRoll);
       if (getWeaponConfig(this))  { await handleWeaponRoll(this);  return; }
       if (getGrenadeConfig(this)) { await handleGrenadeThrow(this); return; }
       if (getHealpackValue(this)) { await handleHealpackRoll(this); return; }
@@ -1700,6 +1698,7 @@ Hooks.once("setup", () => {
   console.log(`${MODULE_ID} | libWrapper registriert.`);
 });
 
+// ═══════════════════════════════════════════════════════════════
 // MUNITIONSLEISTE (adaptiert von Party Resources)
 // ═══════════════════════════════════════════════════════════════
 
